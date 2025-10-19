@@ -14,16 +14,27 @@ Telegram бот для мониторинга цен объявлений на �
 
 1. Клонируйте репозиторий:
 ```bash
-git clone https://github.com/kbonesssss/avito-monitor
-cd avito-monitor
+git clone https://github.com/cnrc/GaezyAvitoBot.git
+cd GaezyAvitoBot
 ```
 
-2. Установите зависимости:
+2. Создайте виртуальное окружение:
 ```bash
-pip install -r requirements.txt
+python3 -m venv .venv
 ```
 
-3. Создайте файл `.env` в корневой директории проекта и добавьте необходимые токены:
+3. Активируйте виртуальное окружение:
+```bash
+source .venv/bin/activate //MacOS, Linux
+.venv\\Scripts\\activate //Windows
+```
+
+4. Установите зависимости:
+```bash
+pip3 install -r requirements.txt
+```
+
+5. Создайте файл `.env` в корневой директории проекта и добавьте необходимые токены:
 ```
 BOT_TOKEN=your_telegram_bot_token
 AVITO_CLIENT_ID=your_avito_client_id
@@ -35,7 +46,7 @@ AVITO_ACCESS_TOKEN=your_avito_access_token
 
 1. Запустите бота:
 ```bash
-python bot.py
+python3 run.py
 ```
 
 2. В Telegram найдите вашего бота и отправьте команду `/start`
