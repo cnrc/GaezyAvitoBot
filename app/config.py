@@ -7,6 +7,8 @@ load_dotenv()
 # Токен вашего Telegram бота
 BOT_TOKEN = os.getenv('BOT_TOKEN')
 
+DATABASE_URL = os.getenv('DATABASE_URL')
+
 # Авито API credentials
 AVITO_CLIENT_ID = os.getenv('AVITO_CLIENT_ID')
 AVITO_CLIENT_SECRET = os.getenv('AVITO_CLIENT_SECRET')

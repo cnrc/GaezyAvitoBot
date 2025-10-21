@@ -40,6 +40,7 @@ BOT_TOKEN=your_telegram_bot_token
 AVITO_CLIENT_ID=your_avito_client_id
 AVITO_CLIENT_SECRET=your_avito_client_secret
 AVITO_ACCESS_TOKEN=your_avito_access_token
+DATABASE_URL=postgresql+asyncpg://user:password@host:port/database_name
 ```
 
 ## Использование
