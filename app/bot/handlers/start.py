@@ -41,7 +41,14 @@ async def start_command(message: types.Message):
 
 @router.message(lambda message: message.text == "🔍 Найти объявления")
 async def search_ads(message: types.Message):
-    await message.answer("🔍 <b>Поиск объявлений</b>\n\nВведите поисковый запрос:", parse_mode="HTML")
+    await message.answer(
+        "🔍 <b>Поиск объявлений</b>\n\n"
+        "Введите параметры поиска в формате:\n"
+        "Запрос | Категория | Город | Цена от | Цена до\n\n"
+        "Например:\n"
+        "iPhone 13 | Электроника | Москва | 50000 | 80000\n\n"
+        "Или просто введите поисковый запрос", parse_mode="HTML"
+        )
 
 @router.message(lambda message: message.text == "📋 Мои отслеживаемые")
 async def my_ads(message: types.Message):
