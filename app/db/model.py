@@ -1,12 +1,14 @@
 import asyncio
-from sqlalchemy import create_engine, Column, Text, Integer, Boolean, DateTime, Numeric, ForeignKey, CheckConstraint, text
+from sqlalchemy import create_engine, Column, Text, Integer, Boolean, DateTime, Numeric, ForeignKey, CheckConstraint, text, select
 from sqlalchemy.orm import relationship, declarative_base
 from sqlalchemy.dialects.postgresql import UUID
-from sqlalchemy.ext.asyncio import create_async_engine
+from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
 from datetime import datetime
-from ..config import DATABASE_URL
+from app.config import DATABASE_URL
 
 Base = declarative_base()
+async_engine = create_async_engine(DATABASE_URL, echo=False)
+AsyncSessionLocal = async_sessionmaker(async_engine, expire_on_commit=False, class_=AsyncSession)
 
 class User(Base):
     __tablename__ = 'users'
@@ -97,10 +99,30 @@ class PromoUsage(Base):
     promocode = relationship("Promocode", back_populates="promo_usages")
 
 async def init_models():
-    engine = create_async_engine(DATABASE_URL, echo=False)
-    async with engine.begin() as conn:
+    async with async_engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 
-if __name__ == "__main__":
-    asyncio.run(init_models())
-    print("Таблицы успешно созданы!")
+async def get_or_create_user(telegram_id: str) -> User:
+    """Создаёт пользователя при первом запуске бота или возвращает существующего."""
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(
+            select(User).where(User.telegram_id == telegram_id)
+        )
+        user = result.scalar_one_or_none()
+        if user is None:
+            user = User(telegram_id=telegram_id)
+            session.add(user)
+            await session.commit()
+            await session.refresh(user)
+        return user
+
+async def user_has_active_subscription(telegram_id: str) -> bool:
+    """Проверяет, есть ли у пользователя активная подписка (end_date > now)."""
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(
+            select(UserSubscription)
+            .join(User, User.id == UserSubscription.user_id)
+            .where(User.telegram_id == telegram_id)
+            .where(UserSubscription.end_date > datetime.utcnow())
+        )
+        return result.first() is not None
