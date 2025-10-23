@@ -4,6 +4,7 @@ router = Router()
 
 @router.message(lambda message: message.text == "❓ Помощь")
 async def help_via_button(message: types.Message):
+    print(f"🔍 HELP HANDLER: Получена кнопка '❓ Помощь' от пользователя {message.from_user.id}")
     await message.answer(
         "❓ <b>Помощь по использованию</b>\n\n"
         "<b>Как отслеживать объявления:</b>\n"

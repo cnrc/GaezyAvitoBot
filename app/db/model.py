@@ -104,25 +104,88 @@ async def init_models():
 
 async def get_or_create_user(telegram_id: str) -> User:
     """Создаёт пользователя при первом запуске бота или возвращает существующего."""
-    async with AsyncSessionLocal() as session:
-        result = await session.execute(
-            select(User).where(User.telegram_id == telegram_id)
-        )
-        user = result.scalar_one_or_none()
-        if user is None:
-            user = User(telegram_id=telegram_id)
-            session.add(user)
-            await session.commit()
-            await session.refresh(user)
-        return user
+    print(f"🔍 DB: get_or_create_user вызвана для telegram_id: {telegram_id}")
+    
+    try:
+        async with AsyncSessionLocal() as session:
+            print(f"🔍 DB: Выполняем запрос для поиска пользователя {telegram_id}")
+            result = await session.execute(
+                select(User).where(User.telegram_id == telegram_id)
+            )
+            user = result.scalar_one_or_none()
+            
+            if user is None:
+                print(f"🔍 DB: Пользователь {telegram_id} не найден, создаем нового")
+                user = User(telegram_id=telegram_id)
+                session.add(user)
+                await session.commit()
+                await session.refresh(user)
+                print(f"🔍 DB: Пользователь {telegram_id} создан успешно")
+            else:
+                print(f"🔍 DB: Пользователь {telegram_id} найден")
+            
+            return user
+    except Exception as e:
+        print(f"❌ DB ERROR: Ошибка в get_or_create_user: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        raise
 
 async def user_has_active_subscription(telegram_id: str) -> bool:
     """Проверяет, есть ли у пользователя активная подписка (end_date > now)."""
+    print(f"🔍 DB: user_has_active_subscription вызвана для telegram_id: {telegram_id}")
+    
+    try:
+        async with AsyncSessionLocal() as session:
+            print(f"🔍 DB: Выполняем запрос для проверки подписки {telegram_id}")
+            result = await session.execute(
+                select(UserSubscription)
+                .join(User, User.id == UserSubscription.user_id)
+                .where(User.telegram_id == telegram_id)
+                .where(UserSubscription.end_date > datetime.utcnow())
+            )
+            has_subscription = result.first() is not None
+            print(f"🔍 DB: Пользователь {telegram_id} имеет активную подписку: {has_subscription}")
+            return has_subscription
+    except Exception as e:
+        print(f"❌ DB ERROR: Ошибка в user_has_active_subscription: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return False
+
+async def user_has_used_promocode(telegram_id: str) -> bool:
+    """Проверяет, использовал ли пользователь когда-либо промокод."""
     async with AsyncSessionLocal() as session:
         result = await session.execute(
-            select(UserSubscription)
-            .join(User, User.id == UserSubscription.user_id)
+            select(PromoUsage)
+            .join(User, User.id == PromoUsage.user_id)
             .where(User.telegram_id == telegram_id)
-            .where(UserSubscription.end_date > datetime.utcnow())
         )
         return result.first() is not None
+
+async def get_user_active_promocode(telegram_id: str) -> Promocode:
+    """Получает активный промокод пользователя (если есть)."""
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(
+            select(Promocode)
+            .join(PromoUsage, PromoUsage.promo_id == Promocode.id)
+            .join(User, User.id == PromoUsage.user_id)
+            .where(User.telegram_id == telegram_id)
+            .where(Promocode.expired_at > datetime.utcnow())
+        )
+        return result.scalar_one_or_none()
+
+# Глобальное хранилище активных промокодов пользователей (временное решение)
+user_active_promocodes = {}
+
+async def set_user_active_promocode(telegram_id: str, promocode: Promocode):
+    """Устанавливает активный промокод для пользователя."""
+    user_active_promocodes[telegram_id] = promocode
+
+async def get_user_current_promocode(telegram_id: str) -> Promocode:
+    """Получает текущий активный промокод пользователя (из временного хранилища)."""
+    return user_active_promocodes.get(telegram_id)
+
+async def clear_user_promocode(telegram_id: str):
+    """Очищает активный промокод пользователя."""
+    user_active_promocodes.pop(telegram_id, None)

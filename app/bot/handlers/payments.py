@@ -6,13 +6,13 @@ from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, LabeledPri
 from sqlalchemy import select
 from decimal import Decimal
 from datetime import datetime, timedelta
-from ...db.model import AsyncSessionLocal, User, SubscriptionPlan, Payment, UserSubscription
+from ...db.model import AsyncSessionLocal, User, SubscriptionPlan, Payment, UserSubscription, Promocode, PromoUsage, get_user_active_promocode, get_user_current_promocode, clear_user_promocode
 from .start import get_main_keyboard
 from ...config import YOOKASSA_TOKEN
 
 router = Router()
 
-async def get_subscription_plans_keyboard():
+async def get_subscription_plans_keyboard(telegram_id: str = None):
     """Создает клавиатуру с доступными планами подписки"""
     try:
         async with AsyncSessionLocal() as session:
@@ -24,9 +24,27 @@ async def get_subscription_plans_keyboard():
         if not plans:
             return None
         
+        # Получаем активный промокод пользователя
+        user_promocode = None
+        if telegram_id:
+            try:
+                user_promocode = await get_user_current_promocode(telegram_id)
+            except Exception:
+                pass
+        
+        # Находим самую дешевую подписку
+        cheapest_plan = min(plans, key=lambda p: float(p.price))
+        
         keyboard_buttons = []
         for plan in plans:
-            button_text = f"{plan.name} - {plan.price} ₽"
+            if user_promocode and plan.id == cheapest_plan.id:
+                # Применяем скидку только к самой дешевой подписке
+                discount_amount = float(plan.price) * (user_promocode.discount_percent / 100)
+                discounted_price = float(plan.price) - discount_amount
+                button_text = f"{plan.name} - {discounted_price:.2f} ₽ (скидка {user_promocode.discount_percent}%)"
+            else:
+                button_text = f"{plan.name} - {plan.price} ₽"
+            
             callback_data = f"buy_plan:{plan.id}"
             keyboard_buttons.append([InlineKeyboardButton(text=button_text, callback_data=callback_data)])
         
@@ -43,9 +61,10 @@ async def get_subscription_plans_keyboard():
 @router.message(lambda m: m.text == "💳 Купить подписку")
 async def buy_subscription(message: types.Message):
     """Обработчик кнопки покупки подписки"""
+    print(f"🔍 PAYMENTS HANDLER: Получена кнопка '💳 Купить подписку' от пользователя {message.from_user.id}")
     
     try:
-        keyboard = await get_subscription_plans_keyboard()
+        keyboard = await get_subscription_plans_keyboard(str(message.from_user.id))
         
         if not keyboard:
             await message.answer(
@@ -61,10 +80,8 @@ async def buy_subscription(message: types.Message):
             reply_markup=keyboard,
             parse_mode="HTML"
         )
-        print("🚨 PAYMENTS HANDLER: Сообщение отправлено успешно")
         
     except Exception as e:
-        print(f"🚨 PAYMENTS HANDLER: Ошибка: {e}")
         import traceback
         traceback.print_exc()
 
@@ -95,15 +112,38 @@ async def handle_buy_plan(callback: types.CallbackQuery):
             return
         
         try:
+            # Получаем активный промокод пользователя
+            user_promocode = await get_user_current_promocode(str(callback.from_user.id))
+            
+            # Находим самую дешевую подписку для проверки применения скидки
+            async with AsyncSessionLocal() as session:
+                result = await session.execute(
+                    select(SubscriptionPlan).where(SubscriptionPlan.is_active == True)
+                )
+                all_plans = result.scalars().all()
+                cheapest_plan = min(all_plans, key=lambda p: float(p.price))
+            
+            # Рассчитываем цену
+            if user_promocode and plan.id == cheapest_plan.id:
+                # Применяем скидку только к самой дешевой подписке
+                discount_amount = float(plan.price) * (user_promocode.discount_percent / 100)
+                final_price = float(plan.price) - discount_amount
+                title = f"Подписка {plan.name} (скидка {user_promocode.discount_percent}%)"
+                description = f"Подписка на {plan.duration_days} дней для мониторинга цен на Avito\n🎟 Промокод: {user_promocode.code}"
+            else:
+                final_price = float(plan.price)
+                title = f"Подписка {plan.name}"
+                description = f"Подписка на {plan.duration_days} дней для мониторинга цен на Avito"
+            
             # Создаем инвойс через Telegram
             await callback.bot.send_invoice(
                 chat_id=callback.from_user.id,
-                title=f"Подписка {plan.name}",
-                description=f"Подписка на {plan.duration_days} дней для мониторинга цен на Avito",
+                title=title,
+                description=description,
                 payload=f"subscription_{plan.id}_{user.id}",  # Уникальный payload
                 provider_token=YOOKASSA_TOKEN,  # Для тестового режима используем TEST
                 currency="RUB",
-                prices=[LabeledPrice(label=f"Подписка {plan.name}", amount=int(plan.price * 100))],  # Сумма в копейках
+                prices=[LabeledPrice(label=f"Подписка {plan.name}", amount=int(final_price * 100))],  # Сумма в копейках
                 start_parameter=f"subscription_{plan.id}",
                 need_name=False,
                 need_phone_number=False,
@@ -225,7 +265,7 @@ async def process_successful_payment(message: types.Message):
             payment_record = Payment(
                 user_id=user.id,
                 plan_id=plan.id,
-                provider="telegram",
+                provider="ЮКасса",
                 transaction_id=payment.telegram_payment_charge_id,
                 status=True
             )
@@ -242,16 +282,56 @@ async def process_successful_payment(message: types.Message):
                 end_date=end_date
             )
             session.add(subscription)
+            
+            # Проверяем, была ли применена скидка (только для самой дешевой подписки)
+            user_promocode = await get_user_current_promocode(str(message.from_user.id))
+            promo_applied = False
+            
+            if user_promocode:
+                # Находим самую дешевую подписку
+                result_all_plans = await session.execute(
+                    select(SubscriptionPlan).where(SubscriptionPlan.is_active == True)
+                )
+                all_plans = result_all_plans.scalars().all()
+                cheapest_plan = min(all_plans, key=lambda p: float(p.price))
+                
+                if plan.id == cheapest_plan.id:
+                    # Записываем использование промокода только для самой дешевой подписки
+                    promo_usage = PromoUsage(
+                        user_id=user.id,
+                        promo_id=user_promocode.id
+                    )
+                    session.add(promo_usage)
+                    
+                    # Увеличиваем счетчик использования промокода
+                    promocode_result = await session.execute(
+                        select(Promocode).where(Promocode.id == user_promocode.id)
+                    )
+                    promocode_obj = promocode_result.scalar_one_or_none()
+                    if promocode_obj:
+                        promocode_obj.used_count += 1
+                    
+                    promo_applied = True
+                    
+                    # Очищаем активный промокод пользователя
+                    await clear_user_promocode(str(message.from_user.id))
+            
             await session.commit()
             
             # Отправляем подтверждение
             keyboard = await get_main_keyboard(str(message.from_user.id))
+            confirmation_text = f"✅ <b>Подписка активирована!</b>\n\n"
+            confirmation_text += f"📋 <b>Подписка:</b> {plan.name}\n"
+            confirmation_text += f"⏰ <b>Срок:</b> {plan.duration_days} дней\n"
+            confirmation_text += f"📅 <b>Действует до:</b> {end_date.strftime('%d.%m.%Y %H:%M')}\n\n"
+            
+            if promo_applied:
+                confirmation_text += f"🎟 <b>Промокод применен!</b> Скидка {user_promocode.discount_percent}% учтена.\n\n"
+            
+            confirmation_text += "Теперь у вас есть доступ ко всем функциям бота!"
+            
             await message.answer(
-                f"✅ <b>Подписка активирована!</b>\n\n"
-                f"📋 <b>План:</b> {plan.name}\n"
-                f"⏰ <b>Срок:</b> {plan.duration_days} дней\n"
-                f"📅 <b>Действует до:</b> {end_date.strftime('%d.%m.%Y %H:%M')}\n\n"
-                f"Теперь у вас есть доступ ко всем функциям бота!",
+                confirmation_text,
                 reply_markup=keyboard,
                 parse_mode="HTML"
             )

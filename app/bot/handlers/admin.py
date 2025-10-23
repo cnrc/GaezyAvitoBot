@@ -105,7 +105,7 @@ async def delete_plan_menu(message: types.Message):
         res = await session.execute(select(SubscriptionPlan).where(SubscriptionPlan.is_active == True))
         plans = res.scalars().all()
     if not plans:
-        await message.answer("Нет доступных планов.")
+        await message.answer("Нет доступных подписок.")
         return
     rows = [[InlineKeyboardButton(text=f"❌ {p.name} ({p.alias})", callback_data=f"delplan:{p.id}")]
             for p in plans]
@@ -126,7 +126,7 @@ async def handle_delete_plan(cb: types.CallbackQuery):
         plan.is_active = False
         await session.commit()
     await cb.answer("Деактивирован")
-    await cb.message.edit_text("План деактивирован (is_active = false).")
+    await cb.message.edit_text("Подписка деактивирована.")
 
 # ---- Промокоды ----
 @router.message(lambda m: m.text == "➕ Создать промокод")
@@ -136,9 +136,17 @@ async def create_promo_prompt(message: types.Message):
         return
     admin_state[message.from_user.id] = "create_promo"
     await message.answer(
-        "Введите параметры промокода через |:\n"
-        "CODE | discount_percent | usage_limit | expired_at(YYYY-MM-DD)\n\n"
-        "Пример: SPRING25 | 25 | 100 | 2026-03-31"
+        "🎟 <b>Создание промокода</b>\n\n"
+        "Введите параметры через символ |:\n"
+        "<code>КОД | СКИДКА_% | ЛИМИТ_ИСПОЛЬЗОВАНИЙ | ДАТА_ИСТЕЧЕНИЯ</code>\n\n"
+        "<b>Пример:</b>\n"
+        "<code>SPRING25 | 25 | 100 | 2026-03-31</code>\n\n"
+        "<b>Параметры:</b>\n"
+        "• КОД - уникальный код промокода\n"
+        "• СКИДКА_% - размер скидки (0-100)\n"
+        "• ЛИМИТ - максимальное количество использований\n"
+        "• ДАТА - дата истечения в формате YYYY-MM-DD",
+        parse_mode="HTML"
     )
 
 @router.message(lambda m: m.text == "🗑 Удалить промокод")
@@ -209,26 +217,71 @@ async def handle_admin_states(message: types.Message):
         if len(parts) != 4:
             await message.answer("Неверный формат. Ожидается: CODE | discount_percent | usage_limit | expired_at(YYYY-MM-DD)")
             return
+        
         code, discount_s, limit_s, expired_s = parts
+        
+        # Валидация параметров
         try:
             discount = int(discount_s)
             usage_limit = int(limit_s)
-            expired_at = types.datetime.datetime.strptime(expired_s, "%Y-%m-%d")
-        except Exception:
-            await message.answer("Параметры промокода указаны неверно")
-            return
-        from datetime import datetime
-        try:
+            
+            # Проверяем диапазон скидки
+            if discount < 0 or discount > 100:
+                await message.answer("❌ Скидка должна быть от 0 до 100 процентов")
+                return
+            
+            # Проверяем лимит использования
+            if usage_limit <= 0:
+                await message.answer("❌ Лимит использования должен быть больше 0")
+                return
+            
+            # Парсим дату
+            from datetime import datetime
             expired_at = datetime.strptime(expired_s, "%Y-%m-%d")
-        except Exception:
-            await message.answer("Дата должна быть в формате YYYY-MM-DD")
+            
+            # Проверяем, что дата не в прошлом
+            if expired_at <= datetime.utcnow():
+                await message.answer("❌ Дата истечения должна быть в будущем")
+                return
+                
+        except ValueError as e:
+            if "time data" in str(e):
+                await message.answer("❌ Неверный формат даты. Используйте YYYY-MM-DD")
+            else:
+                await message.answer("❌ Неверный формат числовых параметров")
             return
-        async with AsyncSessionLocal() as session:
-            promo = Promocode(code=code, discount_percent=discount, usage_limit=usage_limit, expired_at=expired_at)
-            session.add(promo)
-            await session.commit()
-        await message.answer("✅ Промокод создан", reply_markup=get_promocodes_keyboard())
-        admin_state.pop(user_id, None)
-        return
+        except Exception as e:
+            await message.answer(f"❌ Ошибка валидации: {str(e)}")
+            return
+        
+        # Создаем промокод
+        try:
+            async with AsyncSessionLocal() as session:
+                promo = Promocode(
+                    code=code.upper(),  # Приводим к верхнему регистру
+                    discount_percent=discount, 
+                    usage_limit=usage_limit, 
+                    expired_at=expired_at
+                )
+                session.add(promo)
+                await session.commit()
+                
+            await message.answer(
+                f"✅ <b>Промокод создан успешно!</b>\n\n"
+                f"🎟 Код: <code>{code.upper()}</code>\n"
+                f"💰 Скидка: {discount}%\n"
+                f"📊 Лимит: {usage_limit} использований\n"
+                f"📅 Действует до: {expired_at.strftime('%d.%m.%Y')}",
+                reply_markup=get_promocodes_keyboard(),
+                parse_mode="HTML"
+            )
+            admin_state.pop(user_id, None)
+            
+        except Exception as e:
+            if "unique constraint" in str(e).lower():
+                await message.answer("❌ Промокод с таким кодом уже существует")
+            else:
+                await message.answer(f"❌ Ошибка создания промокода: {str(e)}")
+            return
 
 

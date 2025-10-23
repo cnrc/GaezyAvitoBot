@@ -4,7 +4,7 @@ from aiogram.types import BotCommand
 from aiogram.enums import ParseMode
 from app.config import BOT_TOKEN, CHECK_INTERVAL
 from app.utils.logging_config import setup_logging
-from app.bot.handlers import start, help, list_items, remove, messages, search, admin, payments
+from app.bot.handlers import start, help, list_items, remove, messages, search, admin, payments, promocodes
 from app.bot import scheduler
 from app.db.model import init_models
 from aiogram.client.default import DefaultBotProperties
@@ -23,19 +23,36 @@ async def main():
     dp = Dispatcher()
 
 
-    dp.include_router(payments.router)
+    # Порядок регистрации роутеров важен!
+    # Сначала регистрируем специализированные роутеры с конкретными фильтрами
     
-    dp.include_router(start.router)
-    dp.include_router(admin.router) 
+    print("🔍 MAIN: Начинаем регистрацию роутеров")
     
-    # Сначала все специализированные роутеры, затем общий messages
-    dp.include_router(help.router)
-    dp.include_router(list_items.router)
-    dp.include_router(remove.router)
-    dp.include_router(search.router)
-    
-    # messages.router регистрируем последним
+    # ВРЕМЕННО: Регистрируем messages.router ПЕРВЫМ для отладки
+    print("🔍 MAIN: Регистрируем messages.router (ВРЕМЕННО ПЕРВЫМ)")
     dp.include_router(messages.router)
+    
+    # 1. Роутеры с командами (обрабатываются по команде)
+    print("🔍 MAIN: Регистрируем start.router")
+    dp.include_router(start.router)  # /start команда
+    print("🔍 MAIN: Регистрируем admin.router")
+    dp.include_router(admin.router)  # /admin команда
+    
+    # 2. Роутеры с конкретными кнопками (обрабатываются по точному тексту)
+    print("🔍 MAIN: Регистрируем payments.router")
+    dp.include_router(payments.router)    # "💳 Купить подписку" + callback queries
+    print("🔍 MAIN: Регистрируем promocodes.router")
+    dp.include_router(promocodes.router) # "🎟 Ввести промокод" + состояния
+    print("🔍 MAIN: Регистрируем help.router")
+    dp.include_router(help.router)       # "❓ Помощь"
+    print("🔍 MAIN: Регистрируем search.router")
+    dp.include_router(search.router)     # "🔍 Найти объявления"
+    print("🔍 MAIN: Регистрируем list_items.router")
+    dp.include_router(list_items.router) # "📋 Мои отслеживаемые"
+    print("🔍 MAIN: Регистрируем remove.router")
+    dp.include_router(remove.router)    # "🗑️ Удалить объявление" + callback queries
+    
+    print("🔍 MAIN: Все роутеры зарегистрированы успешно")
     
 
     # Устанавливаем команды бота
