@@ -1,4 +1,4 @@
-from aiogram import Router, types
+from aiogram import Router, types, F
 from aiogram.filters import Command
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton
 from sqlalchemy import select, delete
@@ -10,6 +10,17 @@ router = Router()
 
 # Простейшее состояние админских операций (без FSM)
 admin_state = {}
+
+def get_cancel_admin_keyboard():
+    """Создает клавиатуру с кнопкой отмены для админки"""
+    keyboard = ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="❌ Отменить создание")]
+        ],
+        resize_keyboard=True
+    )
+    return keyboard
+
 
 def get_admin_main_keyboard():
     keyboard = ReplyKeyboardMarkup(
@@ -58,25 +69,25 @@ async def admin_entry(message: types.Message):
     
     await message.answer("🛠 Админ-панель", reply_markup=get_admin_main_keyboard())
 
-@router.message(lambda m: m.text == "📦 Подписки")
+@router.message(F.text == "📦 Подписки")
 async def admin_subscriptions(message: types.Message):
     if not await _is_admin(str(message.from_user.id)):
         await message.answer("⛔ Доступ запрещён")
         return
     await message.answer("📦 Управление подписками", reply_markup=get_subscriptions_keyboard())
 
-@router.message(lambda m: m.text == "🎟 Промокоды")
+@router.message(F.text == "🎟 Промокоды")
 async def admin_promocodes(message: types.Message):
     if not await _is_admin(str(message.from_user.id)):
         await message.answer("⛔ Доступ запрещён")
         return
     await message.answer("🎟 Управление промокодами", reply_markup=get_promocodes_keyboard())
 
-@router.message(lambda m: m.text == "◀️ Назад")
+@router.message(F.text == "◀️ Назад")
 async def back_to_main(message: types.Message):
     await message.answer("Главное меню", reply_markup=await get_main_keyboard(str(message.from_user.id)))
 
-@router.message(lambda m: m.text == "◀️ Назад к админке")
+@router.message(F.text == "◀️ Назад к админке")
 async def back_to_admin(message: types.Message):
     if not await _is_admin(str(message.from_user.id)):
         await message.answer("⛔ Доступ запрещён")
@@ -84,7 +95,7 @@ async def back_to_admin(message: types.Message):
     await message.answer("🛠 Админ-панель", reply_markup=get_admin_main_keyboard())
 
 # ---- Подписки ----
-@router.message(lambda m: m.text == "➕ Создать подписку")
+@router.message(F.text == "➕ Создать подписку")
 async def create_plan_prompt(message: types.Message):
     if not await _is_admin(str(message.from_user.id)):
         await message.answer("⛔ Доступ запрещён")
@@ -93,10 +104,11 @@ async def create_plan_prompt(message: types.Message):
     await message.answer(
         "Введите параметры плана через |:\n"
         "name | alias | price | duration_days\n\n"
-        "Пример: Старт | start | 199.99 | 30"
+        "Пример: Старт | start | 199.99 | 30",
+        reply_markup=get_cancel_admin_keyboard()
     )
 
-@router.message(lambda m: m.text == "🗑 Удалить подписку")
+@router.message(F.text == "🗑 Удалить подписку")
 async def delete_plan_menu(message: types.Message):
     if not await _is_admin(str(message.from_user.id)):
         await message.answer("⛔ Доступ запрещён")
@@ -109,9 +121,12 @@ async def delete_plan_menu(message: types.Message):
         return
     rows = [[InlineKeyboardButton(text=f"❌ {p.name} ({p.alias})", callback_data=f"delplan:{p.id}")]
             for p in plans]
+    # Добавляем кнопку отмены в конец списка
+    rows.append([InlineKeyboardButton(text="❌ Отмена", callback_data="cancel_delete_plan")])
+    
     await message.answer("Выберите план для удаления:", reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
 
-@router.callback_query(lambda c: c.data and c.data.startswith("delplan:"))
+@router.callback_query(F.data.startswith("delplan:"))
 async def handle_delete_plan(cb: types.CallbackQuery):
     if not await _is_admin(str(cb.from_user.id)):
         await cb.answer("Нет доступа", show_alert=False)
@@ -129,7 +144,7 @@ async def handle_delete_plan(cb: types.CallbackQuery):
     await cb.message.edit_text("Подписка деактивирована.")
 
 # ---- Промокоды ----
-@router.message(lambda m: m.text == "➕ Создать промокод")
+@router.message(F.text == "➕ Создать промокод")
 async def create_promo_prompt(message: types.Message):
     if not await _is_admin(str(message.from_user.id)):
         await message.answer("⛔ Доступ запрещён")
@@ -146,10 +161,11 @@ async def create_promo_prompt(message: types.Message):
         "• СКИДКА_% - размер скидки (0-100)\n"
         "• ЛИМИТ - максимальное количество использований\n"
         "• ДАТА - дата истечения в формате YYYY-MM-DD",
+        reply_markup=get_cancel_admin_keyboard(),
         parse_mode="HTML"
     )
 
-@router.message(lambda m: m.text == "🗑 Удалить промокод")
+@router.message(F.text == "🗑 Удалить промокод")
 async def delete_promo_menu(message: types.Message):
     if not await _is_admin(str(message.from_user.id)):
         await message.answer("⛔ Доступ запрещён")
@@ -162,9 +178,12 @@ async def delete_promo_menu(message: types.Message):
         return
     rows = [[InlineKeyboardButton(text=f"❌ {p.code}", callback_data=f"delpromo:{p.id}")]
             for p in promos]
+    # Добавляем кнопку отмены в конец списка
+    rows.append([InlineKeyboardButton(text="❌ Отмена", callback_data="cancel_delete_promo")])
+    
     await message.answer("Выберите промокод для удаления:", reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
 
-@router.callback_query(lambda c: c.data and c.data.startswith("delpromo:"))
+@router.callback_query(F.data.startswith("delpromo:"))
 async def handle_delete_promo(cb: types.CallbackQuery):
     if not await _is_admin(str(cb.from_user.id)):
         await cb.answer("Нет доступа", show_alert=False)
@@ -176,12 +195,64 @@ async def handle_delete_promo(cb: types.CallbackQuery):
     await cb.answer("Удалено")
     await cb.message.edit_text("Промокод удалён.")
 
-# ---- Обработка входящих сообщений для состояний ----
-@router.message()
-async def handle_admin_states(message: types.Message):
-    # Исключаем команды, которые должны обрабатываться другими роутерами
-    if message.text and message.text.startswith('/'):
+# ---- Обработчики inline кнопок отмены ----
+@router.callback_query(F.data == "cancel_delete_plan")
+async def handle_cancel_delete_plan(cb: types.CallbackQuery):
+    """Обработчик кнопки отмены удаления подписки"""
+    if not await _is_admin(str(cb.from_user.id)):
+        await cb.answer("Нет доступа", show_alert=False)
         return
+    
+    # Удаляем сообщение с выбором для удаления
+    try:
+        await cb.message.delete()
+        await cb.answer("Операция отменена")
+    except Exception as e:
+        print(f"🔍 ADMIN: Ошибка при удалении сообщения: {e}")
+        await cb.message.edit_text("❌ Операция отменена")
+        await cb.answer("Операция отменена")
+
+@router.callback_query(F.data == "cancel_delete_promo")
+async def handle_cancel_delete_promo(cb: types.CallbackQuery):
+    """Обработчик кнопки отмены удаления промокода"""
+    if not await _is_admin(str(cb.from_user.id)):
+        await cb.answer("Нет доступа", show_alert=False)
+        return
+    
+    # Удаляем сообщение с выбором для удаления
+    try:
+        await cb.message.delete()
+        await cb.answer("Операция отменена")
+    except Exception as e:
+        print(f"🔍 ADMIN: Ошибка при удалении сообщения: {e}")
+        await cb.message.edit_text("❌ Операция отменена")
+        await cb.answer("Операция отменена")
+
+# ---- Обработчики кнопок отмены ----
+@router.message(F.text == "❌ Отменить создание")
+async def cancel_creation(message: types.Message):
+    """Обработчик кнопки отмены создания"""
+    if not await _is_admin(str(message.from_user.id)):
+        await message.answer("⛔ Доступ запрещён")
+        return
+    
+    user_id = message.from_user.id
+    if user_id in admin_state:
+        admin_state.pop(user_id, None)
+        print(f"🔍 ADMIN: Отменено создание для пользователя {user_id}")
+    
+    await message.answer(
+        "❌ <b>Создание отменено</b>\n\n"
+        "Операция создания была отменена.",
+        reply_markup=get_admin_main_keyboard(),
+        parse_mode="HTML"
+    )
+
+
+# ---- Обработка входящих сообщений для состояний ----
+@router.message(lambda message: message.from_user.id in admin_state)
+async def handle_admin_states(message: types.Message):
+    # Обрабатываем только сообщения от пользователей в админском состоянии
     
     user_id = message.from_user.id
     state = admin_state.get(user_id)

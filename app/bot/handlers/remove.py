@@ -1,4 +1,4 @@
-from aiogram import Router, types
+from aiogram import Router, types, F
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from app.utils.storage import user_items
 
@@ -24,7 +24,7 @@ async def remove_menu(message: types.Message):
         )
     await message.answer(msg, reply_markup=_build_remove_keyboard(items))
 
-@router.callback_query(lambda c: c.data and c.data.startswith("rm:"))
+@router.callback_query(F.data.startswith("rm:"))
 async def handle_remove_callback(callback: types.CallbackQuery):
     user_id = callback.from_user.id
     item_id = callback.data.split(":", 1)[1]

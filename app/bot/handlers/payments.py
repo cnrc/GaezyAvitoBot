@@ -58,10 +58,13 @@ async def get_subscription_plans_keyboard(telegram_id: str = None):
         traceback.print_exc()
         return None
 
-@router.message(lambda m: m.text == "💳 Купить подписку")
+@router.message(lambda message: message.text == "💳 Купить подписку")
 async def buy_subscription(message: types.Message):
     """Обработчик кнопки покупки подписки"""
+    print(f"🔍 PAYMENTS HANDLER: ===== НАЧАЛО ОБРАБОТКИ КНОПКИ ПОКУПКИ =====")
     print(f"🔍 PAYMENTS HANDLER: Получена кнопка '💳 Купить подписку' от пользователя {message.from_user.id}")
+    print(f"🔍 PAYMENTS HANDLER: Текст сообщения: '{message.text}'")
+    print(f"🔍 PAYMENTS HANDLER: Начинаем обработку кнопки покупки подписки")
     
     try:
         keyboard = await get_subscription_plans_keyboard(str(message.from_user.id))
@@ -85,7 +88,7 @@ async def buy_subscription(message: types.Message):
         import traceback
         traceback.print_exc()
 
-@router.callback_query(lambda c: c.data and c.data.startswith("buy_plan:"))
+@router.callback_query(F.data.startswith("buy_plan:"))
 async def handle_buy_plan(callback: types.CallbackQuery):
     """Обработчик выбора плана подписки"""
     plan_id = callback.data.split(":", 1)[1]
@@ -167,7 +170,7 @@ async def handle_buy_plan(callback: types.CallbackQuery):
             await callback.answer("❌ Ошибка при создании инвойса", show_alert=True)
 
 
-@router.callback_query(lambda c: c.data == "cancel_buy")
+@router.callback_query(F.data == "cancel_buy")
 async def handle_cancel_buy(callback: types.CallbackQuery):
     """Отмена выбора подписки: удаляет сообщение с планами"""
     try:
@@ -224,7 +227,7 @@ async def process_pre_checkout_query(pre_checkout_query: types.PreCheckoutQuery)
         print(f"Ошибка при обработке pre-checkout: {e}")
         await pre_checkout_query.answer(ok=False, error_message="Ошибка обработки платежа")
 
-@router.message(lambda m: m.content_type == types.ContentType.SUCCESSFUL_PAYMENT)
+@router.message(F.content_type == types.ContentType.SUCCESSFUL_PAYMENT)
 async def process_successful_payment(message: types.Message):
     """Обработчик успешного платежа"""
     try:

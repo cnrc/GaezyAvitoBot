@@ -1,7 +1,7 @@
 """
 Обработчики для работы с промокодами
 """
-from aiogram import Router, types
+from aiogram import Router, types, F
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
 from sqlalchemy import select
 from datetime import datetime
@@ -15,10 +15,23 @@ promo_state = {}
 
 print("🔍 PROMOCODES MODULE: Модуль promocodes.py загружен")
 
-@router.message(lambda m: m.text == "🎟 Ввести промокод")
+def get_cancel_keyboard():
+    """Создает клавиатуру с кнопкой отмены"""
+    keyboard = ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="❌ Отменить ввод")]
+        ],
+        resize_keyboard=True
+    )
+    return keyboard
+
+@router.message(lambda message: message.text == "🎟 Ввести промокод")
 async def enter_promocode_prompt(message: types.Message):
     """Обработчик кнопки ввода промокода"""
+    print(f"🔍 PROMOCODES HANDLER: ===== НАЧАЛО ОБРАБОТКИ КНОПКИ ПРОМОКОДА =====")
     print(f"🔍 PROMOCODES HANDLER: Получено сообщение '{message.text}' от пользователя {message.from_user.id}")
+    print(f"🔍 PROMOCODES HANDLER: Текст сообщения: '{message.text}'")
+    print(f"🔍 PROMOCODES HANDLER: Начинаем обработку кнопки ввода промокода")
     
     telegram_id = str(message.from_user.id)
     
@@ -30,11 +43,35 @@ async def enter_promocode_prompt(message: types.Message):
         "🎟 <b>Введите промокод</b>\n\n"
         "Введите код промокода для получения скидки на самую дешевую подписку.\n"
         "Промокод можно использовать многократно!",
+        reply_markup=get_cancel_keyboard(),
         parse_mode="HTML"
     )
     print(f"🔍 PROMOCODES HANDLER: Отправлено сообщение пользователю {message.from_user.id}")
 
-@router.message(lambda m: m.text and m.text != "🎟 Ввести промокод")
+@router.message(lambda message: message.text == "❌ Отменить ввод")
+async def cancel_promocode_input(message: types.Message):
+    """Обработчик кнопки отмены ввода промокода"""
+    print(f"🔍 PROMOCODES HANDLER: ===== ОТМЕНА ВВОДА ПРОМОКОДА =====")
+    print(f"🔍 PROMOCODES HANDLER: Получена кнопка отмены от пользователя {message.from_user.id}")
+    
+    user_id = message.from_user.id
+    
+    # Убираем состояние
+    if user_id in promo_state:
+        promo_state.pop(user_id, None)
+        print(f"🔍 PROMOCODES HANDLER: Убрано состояние для пользователя {user_id}")
+    
+    # Возвращаем главную клавиатуру
+    keyboard = await get_main_keyboard(str(user_id))
+    await message.answer(
+        "❌ <b>Ввод промокода отменен</b>\n\n"
+        "Вы можете попробовать ввести промокод позже.",
+        reply_markup=keyboard,
+        parse_mode="HTML"
+    )
+    print(f"🔍 PROMOCODES HANDLER: Отправлено сообщение об отмене пользователю {user_id}")
+
+@router.message(lambda message: message.text != "🎟 Ввести промокод" and message.text != "❌ Отменить ввод")
 async def handle_promocode_input(message: types.Message):
     """Обработчик ввода промокода"""
     user_id = message.from_user.id
@@ -90,7 +127,7 @@ async def handle_promocode_input(message: types.Message):
                 f"📅 Действует до: {promocode.expired_at.strftime('%d.%m.%Y')}\n\n"
                 f"💡 <b>Важно:</b> Скидка будет применена только к самой дешевой подписке!",
                 parse_mode="HTML",
-                reply_markup=get_main_keyboard(str(user_id))
+                reply_markup=await get_main_keyboard(str(user_id))
             )
             
     except Exception as e:

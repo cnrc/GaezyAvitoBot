@@ -32,11 +32,9 @@ async def get_main_keyboard(telegram_id: str = None):
         keyboard_rows.append([KeyboardButton(text="⚙️ Управление")])
     else:
         print(f"🔍 KEYBOARD: Создаем клавиатуру для пользователя без подписки")
+
         # Кнопки для пользователей без подписки
-        keyboard_rows.append([KeyboardButton(text="💳 Купить подписку")])
-        
-        # Показываем кнопку промокода всем пользователям без подписки
-        keyboard_rows.append([KeyboardButton(text="🎟 Ввести промокод")])
+        keyboard_rows.append([KeyboardButton(text="💳 Купить подписку"), KeyboardButton(text="🎟 Ввести промокод")])
 
     # Добавляем общую строку
     keyboard_rows.append(common_row)

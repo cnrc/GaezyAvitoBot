@@ -1,10 +1,13 @@
-from aiogram import Router, types
+from aiogram import Router, types, F
 
 router = Router()
 
 @router.message(lambda message: message.text == "❓ Помощь")
 async def help_via_button(message: types.Message):
+    print(f"🔍 HELP HANDLER: ===== НАЧАЛО ОБРАБОТКИ КНОПКИ ПОМОЩИ =====")
     print(f"🔍 HELP HANDLER: Получена кнопка '❓ Помощь' от пользователя {message.from_user.id}")
+    print(f"🔍 HELP HANDLER: Текст сообщения: '{message.text}'")
+    print(f"🔍 HELP HANDLER: Начинаем обработку кнопки помощи")
     await message.answer(
         "❓ <b>Помощь по использованию</b>\n\n"
         "<b>Как отслеживать объявления:</b>\n"
