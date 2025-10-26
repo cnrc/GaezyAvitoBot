@@ -1,8 +1,7 @@
 import re
 from aiogram import Router, types
-from app.utils.storage import user_items
 from app.config import MAX_ITEMS_PER_USER, CHECK_INTERVAL, PRICE_CHANGE_THRESHOLD
-from ...db.model import user_has_active_subscription
+from app.db import user_has_active_subscription, get_user_tracked_items, add_tracked_item
 from app.avito_api import AvitoAPI
 
 router = Router()
@@ -55,24 +54,37 @@ async def handle_message(message: types.Message):
 
     # Обработка ID объявления (только числа)
     if re.match(r"^\d+$", text):
-        if len(user_items.get(user_id, {})) >= MAX_ITEMS_PER_USER:
-            await message.answer(f"Достигнут лимит отслеживаемых объявлений ({MAX_ITEMS_PER_USER}).")
-            return
-
         try:
+            # Проверяем текущие отслеживаемые объявления
+            tracked_items = await get_user_tracked_items(str(user_id))
+            if len(tracked_items) >= MAX_ITEMS_PER_USER:
+                await message.answer(f"Достигнут лимит отслеживаемых объявлений ({MAX_ITEMS_PER_USER}).")
+                return
+
             item_details = await api.get_item_details(text)
             if not item_details:
                 await message.answer("Объявление не найдено.")
                 return
 
             price = float(item_details.get("price", 0))
-            user_items.setdefault(user_id, {})[text] = price
+            title = item_details.get("title", "")
+            
+            # Добавляем в БД
+            await add_tracked_item(str(user_id), text, price, title)
+            
             await message.answer(
                 f"✅ Объявление добавлено в отслеживание!\n"
+                f"📌 {title}\n"
                 f"💰 Текущая цена: {price:,.2f} ₽\n"
                 f"🔄 Проверка каждые {CHECK_INTERVAL // 60} минут"
             )
+        except ValueError as e:
+            if "already tracked" in str(e):
+                await message.answer("Это объявление уже отслеживается.")
+            else:
+                await message.answer("Ошибка при добавлении объявления.")
         except Exception as e:
+            print(f"Ошибка при добавлении объявления: {e}")
             await message.answer("Ошибка при добавлении объявления.")
         return
 

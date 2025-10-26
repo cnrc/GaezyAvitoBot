@@ -6,7 +6,7 @@ from app.config import BOT_TOKEN, CHECK_INTERVAL
 from app.utils.logging_config import setup_logging
 from app.bot.handlers import start, help, list_items, remove, messages, search, admin, payments, promocodes
 from app.bot import scheduler
-from app.db.model import init_models
+from app.db import init_models
 from aiogram.client.default import DefaultBotProperties
 
 logger = setup_logging()
@@ -65,17 +65,6 @@ async def main():
     # dp.include_router(messages.router)
     
     print("🔍 MAIN: Все роутеры зарегистрированы успешно")
-    
-
-    # Устанавливаем команды бота
-    await bot.set_my_commands([
-        BotCommand(command="start", description="Запуск бота"),
-        BotCommand(command="help", description="Справка"),
-        BotCommand(command="search", description="Поиск объявлений"),
-        BotCommand(command="list", description="Список отслеживаемых"),
-        BotCommand(command="remove", description="Удалить объявление"),
-        BotCommand(command="admin", description="Админ-панель")
-    ])
 
     # Запуск фоновой задачи проверки цен
     async def loop_check():

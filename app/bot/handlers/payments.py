@@ -4,13 +4,15 @@
 from aiogram import Router, types, F
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, LabeledPrice
 from sqlalchemy import select
-from decimal import Decimal
 from datetime import datetime, timedelta
 from ...db.model import AsyncSessionLocal, User, SubscriptionPlan, Payment, UserSubscription, Promocode, PromoUsage, get_user_active_promocode, get_user_current_promocode, clear_user_promocode
 from .start import get_main_keyboard
 from ...config import YOOKASSA_TOKEN
+from typing import Dict, Set
 
 router = Router()
+
+user_plan_messages: Dict[int, int] = {}   
 
 async def get_subscription_plans_keyboard(telegram_id: str = None):
     """Создает клавиатуру с доступными планами подписки"""
@@ -32,8 +34,11 @@ async def get_subscription_plans_keyboard(telegram_id: str = None):
             except Exception:
                 pass
         
+        # Сортируем планы по возрастанию цены
+        plans = sorted(plans, key=lambda p: float(p.price))
+        
         # Находим самую дешевую подписку
-        cheapest_plan = min(plans, key=lambda p: float(p.price))
+        cheapest_plan = plans[0]  # Первый элемент после сортировки
         
         keyboard_buttons = []
         for plan in plans:
@@ -67,6 +72,18 @@ async def buy_subscription(message: types.Message):
     print(f"🔍 PAYMENTS HANDLER: Начинаем обработку кнопки покупки подписки")
     
     try:
+        # Проверяем, есть ли у пользователя активная подписка
+        from ...db.model import user_has_active_subscription
+        has_subscription = await user_has_active_subscription(str(message.from_user.id))
+        
+        if has_subscription:
+            await message.answer(
+                "✅ <b>У вас уже есть активная подписка!</b>\n\n"
+                "Используйте кнопки меню для работы с ботом.",
+                parse_mode="HTML"
+            )
+            return
+        
         keyboard = await get_subscription_plans_keyboard(str(message.from_user.id))
         
         if not keyboard:
@@ -77,12 +94,15 @@ async def buy_subscription(message: types.Message):
             )
             return
         
-        await message.answer(
+        plan_message = await message.answer(
             "💳 <b>Выберите план подписки</b>\n\n"
             "Нажмите на подходящий план для оплаты:",
             reply_markup=keyboard,
             parse_mode="HTML"
         )
+        
+        # Сохраняем ID сообщения с планами
+        user_plan_messages[message.from_user.id] = plan_message.message_id
         
     except Exception as e:
         import traceback
@@ -273,6 +293,7 @@ async def process_successful_payment(message: types.Message):
                 status=True
             )
             session.add(payment_record)
+            await session.flush()  # Получаем ID платежа
             
             # Создаем подписку
             start_date = datetime.utcnow()
@@ -302,7 +323,8 @@ async def process_successful_payment(message: types.Message):
                     # Записываем использование промокода только для самой дешевой подписки
                     promo_usage = PromoUsage(
                         user_id=user.id,
-                        promo_id=user_promocode.id
+                        promo_id=user_promocode.id,
+                        payment_id=payment_record.id  # Связываем с платежом
                     )
                     session.add(promo_usage)
                     
@@ -320,6 +342,20 @@ async def process_successful_payment(message: types.Message):
                     await clear_user_promocode(str(message.from_user.id))
             
             await session.commit()
+            
+            # Удаляем сообщение с планами подписки
+            try:
+                user_id = message.from_user.id
+                if user_id in user_plan_messages:
+                    plan_message_id = user_plan_messages[user_id]
+                    await message.bot.delete_message(
+                        chat_id=user_id,
+                        message_id=plan_message_id
+                    )
+                    # Удаляем из хранилища
+                    del user_plan_messages[user_id]
+            except Exception as e:
+                print(f"Не удалось удалить сообщение с планами: {e}")
             
             # Отправляем подтверждение
             keyboard = await get_main_keyboard(str(message.from_user.id))

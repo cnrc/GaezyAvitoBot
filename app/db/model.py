@@ -1,9 +1,9 @@
 import asyncio
 from sqlalchemy import create_engine, Column, Text, Integer, Boolean, DateTime, Numeric, ForeignKey, CheckConstraint, text, select
 from sqlalchemy.orm import relationship, declarative_base
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
-from datetime import datetime
+from datetime import datetime, timedelta
 from app.config import DATABASE_URL
 
 Base = declarative_base()
@@ -22,6 +22,9 @@ class User(Base):
     subscriptions = relationship("UserSubscription", back_populates="user")
     payments = relationship("Payment", back_populates="user")
     promo_usages = relationship("PromoUsage", back_populates="user")
+    tracked_items = relationship("TrackedItem", back_populates="user", cascade="all, delete-orphan")
+    tracked_searches = relationship("TrackedSearch", back_populates="user", cascade="all, delete-orphan")
+    active_promocode = relationship("UserActivePromocode", back_populates="user", uselist=False, cascade="all, delete-orphan")
 
 class SubscriptionPlan(Base):
     __tablename__ = 'subscription_plans'
@@ -65,6 +68,7 @@ class Payment(Base):
     # Relationships
     user = relationship("User", back_populates="payments")
     plan = relationship("SubscriptionPlan", back_populates="payments")
+    promo_usages = relationship("PromoUsage", back_populates="payment")
 
 class Promocode(Base):
     __tablename__ = 'promocodes'
@@ -92,11 +96,78 @@ class PromoUsage(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, server_default=text("uuid_generate_v4()"))
     user_id = Column(UUID(as_uuid=True), ForeignKey('users.id'), nullable=False)
     promo_id = Column(UUID(as_uuid=True), ForeignKey('promocodes.id'), nullable=False)
+    payment_id = Column(UUID(as_uuid=True), ForeignKey('payments.id'), nullable=True)
     used_at = Column(DateTime, default=datetime.utcnow)
     
     # Relationships
     user = relationship("User", back_populates="promo_usages")
     promocode = relationship("Promocode", back_populates="promo_usages")
+    payment = relationship("Payment", back_populates="promo_usages")
+
+
+class UserActivePromocode(Base):
+    """Активный промокод пользователя (для применения при следующей покупке)"""
+    __tablename__ = 'user_active_promocodes'
+    
+    id = Column(UUID(as_uuid=True), primary_key=True, server_default=text("uuid_generate_v4()"))
+    user_id = Column(UUID(as_uuid=True), ForeignKey('users.id', ondelete='CASCADE'), unique=True, nullable=False)
+    promo_id = Column(UUID(as_uuid=True), ForeignKey('promocodes.id', ondelete='CASCADE'), nullable=False)
+    activated_at = Column(DateTime, default=datetime.utcnow)
+    
+    # Relationships
+    user = relationship("User", back_populates="active_promocode")
+    promocode = relationship("Promocode")
+
+
+class TrackedItem(Base):
+    """Отслеживание конкретных объявлений по ID"""
+    __tablename__ = 'tracked_items'
+    
+    id = Column(UUID(as_uuid=True), primary_key=True, server_default=text("uuid_generate_v4()"))
+    user_id = Column(UUID(as_uuid=True), ForeignKey('users.id', ondelete='CASCADE'), nullable=False)
+    
+    # ID объявления на Авито
+    item_id = Column(Text, nullable=False)
+    
+    # Последнее состояние объявления
+    last_price = Column(Numeric(10, 2), nullable=True)
+    last_title = Column(Text, nullable=True)
+    last_description = Column(Text, nullable=True)
+    
+    # Метаданные
+    created_at = Column(DateTime, default=datetime.utcnow)
+    last_checked_at = Column(DateTime, nullable=True)
+    is_active = Column(Boolean, default=True)
+    
+    # Relationships
+    user = relationship("User", back_populates="tracked_items")
+
+
+class TrackedSearch(Base):
+    """Отслеживание новых объявлений по фильтрам"""
+    __tablename__ = 'tracked_searches'
+    
+    id = Column(UUID(as_uuid=True), primary_key=True, server_default=text("uuid_generate_v4()"))
+    user_id = Column(UUID(as_uuid=True), ForeignKey('users.id', ondelete='CASCADE'), nullable=False)
+    
+    # Параметры поиска
+    search_query = Column(Text, nullable=True)
+    category_id = Column(Integer, nullable=True)
+    location_id = Column(Integer, nullable=True)
+    price_from = Column(Integer, nullable=True)
+    price_to = Column(Integer, nullable=True)
+    
+    # Состояние поиска (храним последние найденные ID в виде JSON)
+    last_found_item_ids = Column(JSONB, default=list)
+    
+    # Метаданные
+    created_at = Column(DateTime, default=datetime.utcnow)
+    last_checked_at = Column(DateTime, nullable=True)
+    is_active = Column(Boolean, default=True)
+    
+    # Relationships
+    user = relationship("User", back_populates="tracked_searches")
+
 
 async def init_models():
     async with async_engine.begin() as conn:
@@ -189,3 +260,62 @@ async def get_user_current_promocode(telegram_id: str) -> Promocode:
 async def clear_user_promocode(telegram_id: str):
     """Очищает активный промокод пользователя."""
     user_active_promocodes.pop(telegram_id, None)
+
+async def user_has_ever_had_subscription(telegram_id: str) -> bool:
+    """Проверяет, была ли у пользователя когда-либо подписка."""
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(
+            select(UserSubscription)
+            .join(User, User.id == UserSubscription.user_id)
+            .where(User.telegram_id == telegram_id)
+        )
+        return result.first() is not None
+
+async def create_trial_subscription(telegram_id: str) -> bool:
+    """Создает trial подписку на 3 дня для нового пользователя."""
+    try:
+        async with AsyncSessionLocal() as session:
+            # Получаем пользователя
+            result = await session.execute(
+                select(User).where(User.telegram_id == telegram_id)
+            )
+            user = result.scalar_one_or_none()
+            
+            if not user:
+                print(f"❌ Пользователь {telegram_id} не найден для создания trial подписки")
+                return False
+            
+            # Получаем самый дешевый план для создания trial подписки
+            result = await session.execute(
+                select(SubscriptionPlan).where(SubscriptionPlan.is_active == True)
+            )
+            plans = result.scalars().all()
+            
+            if not plans:
+                print(f"❌ Нет доступных планов для создания trial подписки")
+                return False
+            
+            # Берем самый дешевый план
+            cheapest_plan = min(plans, key=lambda p: float(p.price))
+            
+            # Создаем trial подписку на 3 дня
+            start_date = datetime.utcnow()
+            end_date = start_date + timedelta(days=3)
+            
+            subscription = UserSubscription(
+                user_id=user.id,
+                plan_id=cheapest_plan.id,
+                start_date=start_date,
+                end_date=end_date
+            )
+            session.add(subscription)
+            await session.commit()
+            
+            print(f"✅ Trial подписка создана для пользователя {telegram_id} до {end_date}")
+            return True
+            
+    except Exception as e:
+        print(f"❌ Ошибка при создании trial подписки: {e}")
+        import traceback
+        traceback.print_exc()
+        return False

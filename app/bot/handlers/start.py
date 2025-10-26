@@ -1,7 +1,7 @@
 from aiogram import Router, types
 from aiogram.filters import Command
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
-from ...db.model import get_or_create_user, user_has_active_subscription, user_has_used_promocode, UserSubscription
+from ...db.model import get_or_create_user, user_has_active_subscription, user_has_used_promocode, UserSubscription, user_has_ever_had_subscription, create_trial_subscription
 
 router = Router()
 
@@ -67,15 +67,51 @@ async def start_command(message: types.Message):
         await get_or_create_user(str(message.from_user.id))
         print(f"🔍 START HANDLER: Пользователь создан/получен")
         
+        # Проверяем, была ли у пользователя когда-либо подписка
+        has_ever_had_subscription = await user_has_ever_had_subscription(str(message.from_user.id))
+        
+        # Если пользователь никогда не имел подписки, создаем trial подписку
+        trial_created = False
+        if not has_ever_had_subscription:
+            print(f"🔍 START HANDLER: Пользователь {message.from_user.id} никогда не имел подписки, создаем trial")
+            trial_created = await create_trial_subscription(str(message.from_user.id))
+            if trial_created:
+                print(f"✅ START HANDLER: Trial подписка создана для пользователя {message.from_user.id}")
+        
+        # Проверяем наличие активной подписки
+        has_subscription = await user_has_active_subscription(str(message.from_user.id))
+        
         print(f"🔍 START HANDLER: Создаем клавиатуру для пользователя {message.from_user.id}")
         keyboard = await get_main_keyboard(str(message.from_user.id))
         print(f"🔍 START HANDLER: Клавиатура создана")
         
         print(f"🔍 START HANDLER: Отправляем приветственное сообщение")
+        
+        # Формируем сообщение в зависимости от наличия подписки
+        if has_subscription:
+            # Проверяем, это trial подписка или нет
+            if trial_created:
+                welcome_text = (
+                    "🏠 <b>Gaezy Avito Bot</b>\n\n"
+                    "🎉 <b>Добро пожаловать!</b>\n\n"
+                    "✅ <b>Вам предоставлен бесплатный trial период на 3 дня!</b>\n\n"
+                    "Используйте кнопки меню для работы с ботом."
+                )
+            else:
+                welcome_text = (
+                    "🏠 <b>Gaezy Avito Bot</b>\n\n"
+                    "✅ <b>У вас есть активная подписка!</b>\n\n"
+                    "Используйте кнопки меню для работы с ботом."
+                )
+        else:
+            welcome_text = (
+                "🏠 <b>Gaezy Avito Bot</b>\n\n"
+                "Я помогу отслеживать изменения цен на Avito!\n\n"
+                "Если у вас нет активной подписки — нажмите '💳 Купить подписку'."
+            )
+        
         await message.answer(
-            "🏠 <b>Gaezy Avito Bot</b>\n\n"
-            "Я помогу отслеживать изменения цен на Avito!\n\n"
-            "Если у вас нет активной подписки — нажмите '💳 Купить подписку'.",
+            welcome_text,
             reply_markup=keyboard,
             parse_mode="HTML"
         )
