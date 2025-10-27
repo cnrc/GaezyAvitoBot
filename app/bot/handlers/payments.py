@@ -5,8 +5,9 @@ from aiogram import Router, types, F
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, LabeledPrice
 from sqlalchemy import select
 from datetime import datetime, timedelta
-from ...db.model import AsyncSessionLocal, User, SubscriptionPlan, Payment, UserSubscription, Promocode, PromoUsage, get_user_active_promocode, get_user_current_promocode, clear_user_promocode
-from .start import get_main_keyboard
+from ...db.model import AsyncSessionLocal, User, SubscriptionPlan, Payment, UserSubscription, Promocode, PromoUsage
+from ...db import get_user_current_promocode, clear_user_promocode
+from .base import get_main_keyboard
 from ...config import YOOKASSA_TOKEN
 from typing import Dict, Set
 
@@ -164,7 +165,7 @@ async def handle_buy_plan(callback: types.CallbackQuery):
                 title=title,
                 description=description,
                 payload=f"subscription_{plan.id}_{user.id}",  # Уникальный payload
-                provider_token=YOOKASSA_TOKEN,  # Для тестового режима используем TEST
+                provider_token=YOOKASSA_TOKEN, 
                 currency="RUB",
                 prices=[LabeledPrice(label=f"Подписка {plan.name}", amount=int(final_price * 100))],  # Сумма в копейках
                 start_parameter=f"subscription_{plan.id}",
@@ -321,20 +322,13 @@ async def process_successful_payment(message: types.Message):
                 
                 if plan.id == cheapest_plan.id:
                     # Записываем использование промокода только для самой дешевой подписки
+                    # Счетчик уже увеличен при активации промокода в admin.py
                     promo_usage = PromoUsage(
                         user_id=user.id,
                         promo_id=user_promocode.id,
                         payment_id=payment_record.id  # Связываем с платежом
                     )
                     session.add(promo_usage)
-                    
-                    # Увеличиваем счетчик использования промокода
-                    promocode_result = await session.execute(
-                        select(Promocode).where(Promocode.id == user_promocode.id)
-                    )
-                    promocode_obj = promocode_result.scalar_one_or_none()
-                    if promocode_obj:
-                        promocode_obj.used_count += 1
                     
                     promo_applied = True
                     

@@ -1,11 +1,14 @@
+"""
+Базовые команды бота (start, help)
+"""
 from aiogram import Router, types
 from aiogram.filters import Command
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
-from ...db.model import get_or_create_user, user_has_active_subscription, user_has_used_promocode, UserSubscription, user_has_ever_had_subscription, create_trial_subscription
+from ...db.model import get_or_create_user, user_has_active_subscription, UserSubscription, user_has_ever_had_subscription, create_trial_subscription
 
 router = Router()
 
-print("🔍 START MODULE: Модуль start.py загружен")
+print("🔍 BASE MODULE: Модуль base.py загружен")
 
 async def get_main_keyboard(telegram_id: str = None):
     print(f"🔍 KEYBOARD: Создаем клавиатуру для пользователя {telegram_id}")
@@ -126,3 +129,25 @@ async def start_command(message: types.Message):
             f"❌ Произошла ошибка при запуске бота: {str(e)}\n\nПопробуйте позже.",
             parse_mode="HTML"
         )
+
+
+@router.message(lambda message: message.text == "❓ Помощь")
+async def help_via_button(message: types.Message):
+    print(f"🔍 HELP HANDLER: ===== НАЧАЛО ОБРАБОТКИ КНОПКИ ПОМОЩИ =====")
+    print(f"🔍 HELP HANDLER: Получена кнопка '❓ Помощь' от пользователя {message.from_user.id}")
+    print(f"🔍 HELP HANDLER: Текст сообщения: '{message.text}'")
+    print(f"🔍 HELP HANDLER: Начинаем обработку кнопки помощи")
+    await message.answer(
+        "❓ <b>Помощь по использованию</b>\n\n"
+        "<b>Как отслеживать объявления:</b>\n"
+        "1. Найдите объявление на Avito\n"
+        "2. Скопируйте ID из ссылки\n"
+        "3. Отправьте ID боту\n\n"
+        "<b>Пример:</b>\n"
+        "<code>123456789</code>\n\n"
+        "<b>Поиск объявлений:</b>\n"
+        "Нажмите '🔍 Найти объявления' и введите запрос",
+        parse_mode="HTML"
+    )
+
+

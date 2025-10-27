@@ -1,15 +1,20 @@
+"""
+Административные функции и работа с промокодами
+"""
 from aiogram import Router, types, F
 from aiogram.filters import Command
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton
 from sqlalchemy import select, delete
 from decimal import Decimal
+from datetime import datetime
 from ...db.model import AsyncSessionLocal, User, SubscriptionPlan, Promocode
-from .start import get_main_keyboard
+from .base import get_main_keyboard
 
 router = Router()
 
 # Простейшее состояние админских операций (без FSM)
 admin_state = {}
+promo_state = {}  # Состояние для ввода промокода пользователем
 
 def get_cancel_admin_keyboard():
     """Создает клавиатуру с кнопкой отмены для админки"""
@@ -21,6 +26,15 @@ def get_cancel_admin_keyboard():
     )
     return keyboard
 
+def get_cancel_keyboard():
+    """Создает клавиатуру с кнопкой отмены"""
+    keyboard = ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="❌ Отменить ввод")]
+        ],
+        resize_keyboard=True
+    )
+    return keyboard
 
 def get_admin_main_keyboard():
     keyboard = ReplyKeyboardMarkup(
@@ -58,13 +72,14 @@ async def _is_admin(telegram_id: str) -> bool:
         user = res.scalar_one_or_none()
         return bool(user and user.is_admin)
 
+# ============ АДМИН ПАНЕЛЬ ============
+
 @router.message(Command("admin"))
 async def admin_entry(message: types.Message):
     telegram_id = str(message.from_user.id)
     is_admin = await _is_admin(telegram_id)
     
     if not is_admin:
-        # Не отвечаем пользователям без прав админа
         return
     
     await message.answer("🛠 Админ-панель", reply_markup=get_admin_main_keyboard())
@@ -121,7 +136,6 @@ async def delete_plan_menu(message: types.Message):
         return
     rows = [[InlineKeyboardButton(text=f"❌ {p.name} ({p.alias})", callback_data=f"delplan:{p.id}")]
             for p in plans]
-    # Добавляем кнопку отмены в конец списка
     rows.append([InlineKeyboardButton(text="❌ Отмена", callback_data="cancel_delete_plan")])
     
     await message.answer("Выберите план для удаления:", reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
@@ -178,7 +192,6 @@ async def delete_promo_menu(message: types.Message):
         return
     rows = [[InlineKeyboardButton(text=f"❌ {p.code}", callback_data=f"delpromo:{p.id}")]
             for p in promos]
-    # Добавляем кнопку отмены в конец списка
     rows.append([InlineKeyboardButton(text="❌ Отмена", callback_data="cancel_delete_promo")])
     
     await message.answer("Выберите промокод для удаления:", reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
@@ -198,12 +211,10 @@ async def handle_delete_promo(cb: types.CallbackQuery):
 # ---- Обработчики inline кнопок отмены ----
 @router.callback_query(F.data == "cancel_delete_plan")
 async def handle_cancel_delete_plan(cb: types.CallbackQuery):
-    """Обработчик кнопки отмены удаления подписки"""
     if not await _is_admin(str(cb.from_user.id)):
         await cb.answer("Нет доступа", show_alert=False)
         return
     
-    # Удаляем сообщение с выбором для удаления
     try:
         await cb.message.delete()
         await cb.answer("Операция отменена")
@@ -214,12 +225,10 @@ async def handle_cancel_delete_plan(cb: types.CallbackQuery):
 
 @router.callback_query(F.data == "cancel_delete_promo")
 async def handle_cancel_delete_promo(cb: types.CallbackQuery):
-    """Обработчик кнопки отмены удаления промокода"""
     if not await _is_admin(str(cb.from_user.id)):
         await cb.answer("Нет доступа", show_alert=False)
         return
     
-    # Удаляем сообщение с выбором для удаления
     try:
         await cb.message.delete()
         await cb.answer("Операция отменена")
@@ -228,10 +237,8 @@ async def handle_cancel_delete_promo(cb: types.CallbackQuery):
         await cb.message.edit_text("❌ Операция отменена")
         await cb.answer("Операция отменена")
 
-# ---- Обработчики кнопок отмены ----
 @router.message(F.text == "❌ Отменить создание")
 async def cancel_creation(message: types.Message):
-    """Обработчик кнопки отмены создания"""
     if not await _is_admin(str(message.from_user.id)):
         await message.answer("⛔ Доступ запрещён")
         return
@@ -239,7 +246,6 @@ async def cancel_creation(message: types.Message):
     user_id = message.from_user.id
     if user_id in admin_state:
         admin_state.pop(user_id, None)
-        print(f"🔍 ADMIN: Отменено создание для пользователя {user_id}")
     
     await message.answer(
         "❌ <b>Создание отменено</b>\n\n"
@@ -248,12 +254,9 @@ async def cancel_creation(message: types.Message):
         parse_mode="HTML"
     )
 
-
-# ---- Обработка входящих сообщений для состояний ----
+# ---- Обработка входящих сообщений для админских состояний ----
 @router.message(lambda message: message.from_user.id in admin_state)
 async def handle_admin_states(message: types.Message):
-    # Обрабатываем только сообщения от пользователей в админском состоянии
-    
     user_id = message.from_user.id
     state = admin_state.get(user_id)
     if not state:
@@ -296,21 +299,16 @@ async def handle_admin_states(message: types.Message):
             discount = int(discount_s)
             usage_limit = int(limit_s)
             
-            # Проверяем диапазон скидки
             if discount < 0 or discount > 100:
                 await message.answer("❌ Скидка должна быть от 0 до 100 процентов")
                 return
             
-            # Проверяем лимит использования
             if usage_limit <= 0:
                 await message.answer("❌ Лимит использования должен быть больше 0")
                 return
             
-            # Парсим дату
-            from datetime import datetime
             expired_at = datetime.strptime(expired_s, "%Y-%m-%d")
             
-            # Проверяем, что дата не в прошлом
             if expired_at <= datetime.utcnow():
                 await message.answer("❌ Дата истечения должна быть в будущем")
                 return
@@ -329,7 +327,7 @@ async def handle_admin_states(message: types.Message):
         try:
             async with AsyncSessionLocal() as session:
                 promo = Promocode(
-                    code=code.upper(),  # Приводим к верхнему регистру
+                    code=code.upper(),
                     discount_percent=discount, 
                     usage_limit=usage_limit, 
                     expired_at=expired_at
@@ -355,4 +353,114 @@ async def handle_admin_states(message: types.Message):
                 await message.answer(f"❌ Ошибка создания промокода: {str(e)}")
             return
 
+# ============ ПОЛЬЗОВАТЕЛЬСКИЕ ПРОМОКОДЫ ============
 
+@router.message(lambda message: message.text == "🎟 Ввести промокод")
+async def enter_promocode_prompt(message: types.Message):
+    """Обработчик кнопки ввода промокода"""
+    print(f"🔍 PROMOCODES HANDLER: ===== НАЧАЛО ОБРАБОТКИ КНОПКИ ПРОМОКОДА =====")
+    print(f"🔍 PROMOCODES HANDLER: Получено сообщение '{message.text}' от пользователя {message.from_user.id}")
+    
+    telegram_id = str(message.from_user.id)
+    
+    # Устанавливаем состояние
+    promo_state[message.from_user.id] = "enter_promo"
+    print(f"🔍 PROMOCODES HANDLER: Установлено состояние 'enter_promo' для пользователя {message.from_user.id}")
+    
+    await message.answer(
+        "🎟 <b>Введите промокод</b>\n\n"
+        "Введите код промокода для получения скидки на самую дешевую подписку.\n"
+        "Промокод можно использовать многократно!",
+        reply_markup=get_cancel_keyboard(),
+        parse_mode="HTML"
+    )
+
+@router.message(lambda message: message.text == "❌ Отменить ввод")
+async def cancel_promocode_input(message: types.Message):
+    """Обработчик кнопки отмены ввода промокода"""
+    print(f"🔍 PROMOCODES HANDLER: ===== ОТМЕНА ВВОДА ПРОМОКОДА =====")
+    
+    user_id = message.from_user.id
+    
+    # Убираем состояние
+    if user_id in promo_state:
+        promo_state.pop(user_id, None)
+    
+    # Возвращаем главную клавиатуру
+    keyboard = await get_main_keyboard(str(user_id))
+    await message.answer(
+        "❌ <b>Ввод промокода отменен</b>\n\n"
+        "Вы можете попробовать ввести промокод позже.",
+        reply_markup=keyboard,
+        parse_mode="HTML"
+    )
+
+@router.message(lambda message: message.text not in {
+    "🎟 Ввести промокод", "❌ Отменить ввод"
+})
+async def handle_promocode_input(message: types.Message):
+    """Обработчик ввода промокода"""
+    user_id = message.from_user.id
+    
+    # Проверяем, находится ли пользователь в состоянии ввода промокода
+    if user_id not in promo_state or promo_state[user_id] != "enter_promo":
+        return
+    
+    promo_code = message.text.strip().upper()
+    
+    try:
+        async with AsyncSessionLocal() as session:
+            # Ищем промокод в базе данных
+            result = await session.execute(
+                select(Promocode).where(Promocode.code == promo_code)
+            )
+            promocode = result.scalar_one_or_none()
+            
+            if not promocode:
+                await message.answer("❌ Промокод не найден")
+                return
+            
+            # Проверяем, не истек ли промокод
+            if promocode.expired_at <= datetime.utcnow():
+                await message.answer("❌ Промокод истек")
+                return
+            
+            # Проверяем, не исчерпан ли лимит использования
+            if promocode.used_count >= promocode.usage_limit:
+                await message.answer("❌ Лимит использования промокода исчерпан")
+                return
+            
+            # Получаем пользователя
+            user_result = await session.execute(
+                select(User).where(User.telegram_id == str(user_id))
+            )
+            user = user_result.scalar_one_or_none()
+            
+            if not user:
+                await message.answer("❌ Пользователь не найден")
+                return
+            
+            # Увеличиваем счетчик использования промокода
+            promocode.used_count += 1
+            await session.commit()
+            
+            # Сохраняем промокод в БД для применения при оплате
+            from ...db.repository import set_user_active_promocode
+            await set_user_active_promocode(str(user_id), promocode)
+            
+            # Убираем состояние
+            promo_state.pop(user_id, None)
+            
+            await message.answer(
+                f"✅ <b>Промокод активирован!</b>\n\n"
+                f"🎟 Код: {promocode.code}\n"
+                f"💰 Скидка: {promocode.discount_percent}%\n"
+                f"📅 Действует до: {promocode.expired_at.strftime('%d.%m.%Y')}\n\n"
+                f"💡 <b>Важно:</b> Скидка будет применена только к самой дешевой подписке!",
+                parse_mode="HTML",
+                reply_markup=await get_main_keyboard(str(user_id))
+            )
+            
+    except Exception as e:
+        await message.answer(f"❌ Ошибка при применении промокода: {str(e)}")
+        promo_state.pop(user_id, None)
