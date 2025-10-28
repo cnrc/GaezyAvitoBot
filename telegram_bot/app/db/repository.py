@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 from typing import Optional
 from .model import (
     User, SubscriptionPlan, UserSubscription, Payment, 
-    Promocode, PromoUsage, AsyncSessionLocal
+    Promocode, PromoUsage, Tracked, AsyncSessionLocal
 )
 
 
@@ -245,5 +245,394 @@ async def clear_user_promocode(telegram_id: str):
         if active_promo:
             await session.delete(active_promo)
             await session.commit()
+
+
+# =================== ОТСЛЕЖИВАНИЯ ===================
+
+async def add_tracking(telegram_id: str, link: str, name: str = None, min_price: int = None, max_price: int = None) -> bool:
+    """Добавляет новое отслеживание для пользователя."""
+    try:
+        async with AsyncSessionLocal() as session:
+            # Получаем пользователя
+            result = await session.execute(
+                select(User).where(User.telegram_id == telegram_id)
+            )
+            user = result.scalar_one_or_none()
+            
+            if not user:
+                print(f"❌ Пользователь {telegram_id} не найден")
+                return False
+            
+            # Создаем новое отслеживание
+            tracking = Tracked(
+                user_id=user.id,
+                name=name,
+                link=link,
+                min_price=min_price,
+                max_price=max_price,
+                is_active=True
+            )
+            session.add(tracking)
+            await session.commit()
+            
+            print(f"✅ Добавлено отслеживание для пользователя {telegram_id}: {link}")
+            return True
+            
+    except Exception as e:
+        print(f"❌ Ошибка при добавлении отслеживания: {e}")
+        import traceback
+        traceback.print_exc()
+        return False
+
+
+async def get_user_trackings(telegram_id: str, active_only: bool = True) -> list:
+    """Получает список отслеживаний пользователя."""
+    try:
+        async with AsyncSessionLocal() as session:
+            query = select(Tracked).join(User, User.id == Tracked.user_id).where(User.telegram_id == telegram_id)
+            
+            if active_only:
+                query = query.where(Tracked.is_active == True)
+            
+            result = await session.execute(query)
+            trackings = result.scalars().all()
+            
+            return trackings
+            
+    except Exception as e:
+        print(f"❌ Ошибка при получении отслеживаний: {e}")
+        import traceback
+        traceback.print_exc()
+        return []
+
+
+async def archive_tracking(telegram_id: str, tracking_id: str) -> bool:
+    """Архивирует отслеживание (устанавливает is_active = False)."""
+    try:
+        async with AsyncSessionLocal() as session:
+            # Получаем отслеживание пользователя
+            result = await session.execute(
+                select(Tracked).join(User, User.id == Tracked.user_id)
+                .where(User.telegram_id == telegram_id)
+                .where(Tracked.id == tracking_id)
+            )
+            tracking = result.scalar_one_or_none()
+            
+            if not tracking:
+                print(f"❌ Отслеживание {tracking_id} не найдено для пользователя {telegram_id}")
+                return False
+            
+            tracking.is_active = False
+            tracking.updated_at = datetime.utcnow()
+            await session.commit()
+            
+            print(f"✅ Отслеживание {tracking_id} заархивировано для пользователя {telegram_id}")
+            return True
+            
+    except Exception as e:
+        print(f"❌ Ошибка при архивировании отслеживания: {e}")
+        import traceback
+        traceback.print_exc()
+        return False
+
+
+async def archive_all_user_trackings(telegram_id: str) -> int:
+    """Архивирует все активные отслеживания пользователя. Возвращает количество заархивированных."""
+    try:
+        async with AsyncSessionLocal() as session:
+            # Получаем все активные отслеживания пользователя
+            result = await session.execute(
+                select(Tracked).join(User, User.id == Tracked.user_id)
+                .where(User.telegram_id == telegram_id)
+                .where(Tracked.is_active == True)
+            )
+            active_trackings = result.scalars().all()
+            
+            if not active_trackings:
+                return 0
+            
+            # Архивируем все активные отслеживания
+            archived_count = 0
+            for tracking in active_trackings:
+                tracking.is_active = False
+                tracking.updated_at = datetime.utcnow()
+                archived_count += 1
+            
+            await session.commit()
+            
+            print(f"✅ Заархивировано {archived_count} отслеживаний для пользователя {telegram_id}")
+            return archived_count
+            
+    except Exception as e:
+        print(f"❌ Ошибка при архивировании всех отслеживаний: {e}")
+        import traceback
+        traceback.print_exc()
+        return 0
+
+
+async def restore_tracking(telegram_id: str, tracking_id: str) -> bool:
+    """Восстанавливает отслеживание (устанавливает is_active = True)."""
+    try:
+        async with AsyncSessionLocal() as session:
+            # Получаем отслеживание пользователя
+            result = await session.execute(
+                select(Tracked).join(User, User.id == Tracked.user_id)
+                .where(User.telegram_id == telegram_id)
+                .where(Tracked.id == tracking_id)
+            )
+            tracking = result.scalar_one_or_none()
+            
+            if not tracking:
+                print(f"❌ Отслеживание {tracking_id} не найдено для пользователя {telegram_id}")
+                return False
+            
+            tracking.is_active = True
+            tracking.updated_at = datetime.utcnow()
+            await session.commit()
+            
+            print(f"✅ Отслеживание {tracking_id} восстановлено для пользователя {telegram_id}")
+            return True
+            
+    except Exception as e:
+        print(f"❌ Ошибка при восстановлении отслеживания: {e}")
+        import traceback
+        traceback.print_exc()
+        return False
+
+
+async def delete_tracking(telegram_id: str, tracking_id: str) -> bool:
+    """Удаляет отслеживание пользователя."""
+    try:
+        async with AsyncSessionLocal() as session:
+            # Получаем отслеживание пользователя
+            result = await session.execute(
+                select(Tracked).join(User, User.id == Tracked.user_id)
+                .where(User.telegram_id == telegram_id)
+                .where(Tracked.id == tracking_id)
+            )
+            tracking = result.scalar_one_or_none()
+            
+            if not tracking:
+                print(f"❌ Отслеживание {tracking_id} не найдено для пользователя {telegram_id}")
+                return False
+            
+            await session.delete(tracking)
+            await session.commit()
+            
+            print(f"✅ Отслеживание {tracking_id} удалено для пользователя {telegram_id}")
+            return True
+            
+    except Exception as e:
+        print(f"❌ Ошибка при удалении отслеживания: {e}")
+        import traceback
+        traceback.print_exc()
+        return False
+
+
+async def get_all_active_tracked_items() -> list:
+    """Получает все активные отслеживания для проверки планировщиком."""
+    try:
+        async with AsyncSessionLocal() as session:
+            result = await session.execute(
+                select(Tracked).where(Tracked.is_active == True)
+            )
+            trackings = result.scalars().all()
+            return trackings
+            
+    except Exception as e:
+        print(f"❌ Ошибка при получении всех активных отслеживаний: {e}")
+        import traceback
+        traceback.print_exc()
+        return []
+
+
+async def update_tracked_item_state(tracking: Tracked, price: float = None, title: str = None, description: str = None) -> bool:
+    """Обновляет состояние отслеживаемого объявления."""
+    try:
+        async with AsyncSessionLocal() as session:
+            # Получаем отслеживание по ID для обновления
+            result = await session.execute(
+                select(Tracked).where(Tracked.id == tracking.id)
+            )
+            tracked_item = result.scalar_one_or_none()
+            
+            if not tracked_item:
+                print(f"❌ Отслеживание {tracking.id} не найдено для обновления")
+                return False
+            
+            # Обновляем поля (пока у нас простая модель, расширим при необходимости)
+            tracked_item.updated_at = datetime.utcnow()
+            
+            # TODO: При необходимости можно добавить поля last_price, last_title, last_description в модель
+            
+            await session.commit()
+            
+            print(f"✅ Состояние отслеживания {tracking.id} обновлено")
+            return True
+            
+    except Exception as e:
+        print(f"❌ Ошибка при обновлении состояния отслеживания: {e}")
+        import traceback
+        traceback.print_exc()
+        return False
+
+
+# =================== СТАТИСТИКА ===================
+
+async def get_monthly_statistics() -> dict:
+    """Получает статистику за последний месяц."""
+    try:
+        async with AsyncSessionLocal() as session:
+            from datetime import datetime, timedelta
+            from sqlalchemy import func, and_
+            
+            # Дата месяц назад
+            month_ago = datetime.utcnow() - timedelta(days=30)
+            
+            # 1. Новые пользователи за месяц
+            new_users_result = await session.execute(
+                select(func.count(User.id))
+                .where(User.created_at >= month_ago)
+            )
+            new_users_count = new_users_result.scalar() or 0
+            
+            # 2. Пользователи с активной подпиской
+            active_subscriptions_result = await session.execute(
+                select(func.count(UserSubscription.id.distinct()))
+                .where(UserSubscription.end_date > datetime.utcnow())
+            )
+            active_subscriptions_count = active_subscriptions_result.scalar() or 0
+            
+            # 3. Сумма всех успешных платежей за месяц
+            payments_sum_result = await session.execute(
+                select(func.coalesce(func.sum(SubscriptionPlan.price), 0))
+                .join(Payment, Payment.plan_id == SubscriptionPlan.id)
+                .where(and_(Payment.created_at >= month_ago, Payment.status == True))
+            )
+            total_revenue = float(payments_sum_result.scalar() or 0)
+            
+            # 4. Общее количество пользователей
+            total_users_result = await session.execute(select(func.count(User.id)))
+            total_users = total_users_result.scalar() or 0
+            
+            # 5. Активные отслеживания
+            active_trackings_result = await session.execute(
+                select(func.count(Tracked.id))
+                .where(Tracked.is_active == True)
+            )
+            active_trackings = active_trackings_result.scalar() or 0
+            
+            # 6. Использованные промокоды за месяц
+            used_promos_result = await session.execute(
+                select(func.count(PromoUsage.id))
+                .where(PromoUsage.used_at >= month_ago)
+            )
+            used_promos = used_promos_result.scalar() or 0
+            
+            # 7. Успешные платежи за месяц
+            successful_payments_result = await session.execute(
+                select(func.count(Payment.id))
+                .where(and_(Payment.created_at >= month_ago, Payment.status == True))
+            )
+            successful_payments = successful_payments_result.scalar() or 0
+            
+            return {
+                'period_days': 30,
+                'new_users_month': new_users_count,
+                'active_subscriptions': active_subscriptions_count,
+                'total_revenue_month': total_revenue,
+                'total_users': total_users,
+                'active_trackings': active_trackings,
+                'used_promos_month': used_promos,
+                'successful_payments_month': successful_payments,
+                'generated_at': datetime.utcnow()
+            }
+            
+    except Exception as e:
+        print(f"❌ Ошибка при получении статистики: {e}")
+        import traceback
+        traceback.print_exc()
+        return {}
+
+
+async def get_popular_subscription_plans() -> list:
+    """Получает самые популярные планы подписок за последний месяц."""
+    try:
+        async with AsyncSessionLocal() as session:
+            from datetime import datetime, timedelta
+            from sqlalchemy import func
+            
+            month_ago = datetime.utcnow() - timedelta(days=30)
+            
+            result = await session.execute(
+                select(
+                    SubscriptionPlan.name,
+                    SubscriptionPlan.price,
+                    func.count(Payment.id).label('purchases_count')
+                )
+                .join(Payment, Payment.plan_id == SubscriptionPlan.id)
+                .where(Payment.created_at >= month_ago)
+                .where(Payment.status == True)
+                .group_by(SubscriptionPlan.id, SubscriptionPlan.name, SubscriptionPlan.price)
+                .order_by(func.count(Payment.id).desc())
+            )
+            
+            plans = []
+            for row in result:
+                plans.append({
+                    'name': row.name,
+                    'price': float(row.price),
+                    'purchases': row.purchases_count
+                })
+            
+            return plans
+            
+    except Exception as e:
+        print(f"❌ Ошибка при получении популярных планов: {e}")
+        import traceback
+        traceback.print_exc()
+        return []
+
+
+async def get_daily_activity_stats(days: int = 7) -> list:
+    """Получает статистику активности по дням."""
+    try:
+        async with AsyncSessionLocal() as session:
+            from datetime import datetime, timedelta
+            from sqlalchemy import func, cast, Date
+            
+            stats = []
+            for i in range(days):
+                date = datetime.utcnow().date() - timedelta(days=i)
+                next_date = date + timedelta(days=1)
+                
+                # Новые пользователи в этот день
+                new_users_result = await session.execute(
+                    select(func.count(User.id))
+                    .where(cast(User.created_at, Date) == date)
+                )
+                new_users = new_users_result.scalar() or 0
+                
+                # Успешные платежи в этот день
+                payments_result = await session.execute(
+                    select(func.count(Payment.id))
+                    .where(cast(Payment.created_at, Date) == date)
+                    .where(Payment.status == True)
+                )
+                payments = payments_result.scalar() or 0
+                
+                stats.append({
+                    'date': date.strftime('%d.%m.%Y'),
+                    'new_users': new_users,
+                    'successful_payments': payments
+                })
+            
+            return list(reversed(stats))  # От старых к новым
+            
+    except Exception as e:
+        print(f"❌ Ошибка при получении дневной статистики: {e}")
+        import traceback
+        traceback.print_exc()
+        return []
 
 

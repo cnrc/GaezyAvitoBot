@@ -8,6 +8,7 @@ from sqlalchemy import select, delete
 from decimal import Decimal
 from datetime import datetime
 from ...db.model import AsyncSessionLocal, User, SubscriptionPlan, Promocode
+from ...db import get_monthly_statistics, get_popular_subscription_plans, get_daily_activity_stats
 from .base import get_main_keyboard
 
 router = Router()
@@ -40,6 +41,7 @@ def get_admin_main_keyboard():
     keyboard = ReplyKeyboardMarkup(
         keyboard=[
             [KeyboardButton(text="📦 Подписки"), KeyboardButton(text="🎟 Промокоды")],
+            [KeyboardButton(text="📊 Статистика")],
             [KeyboardButton(text="◀️ Назад")]
         ],
         resize_keyboard=True
@@ -60,6 +62,17 @@ def get_promocodes_keyboard():
     keyboard = ReplyKeyboardMarkup(
         keyboard=[
             [KeyboardButton(text="➕ Создать промокод"), KeyboardButton(text="🗑 Удалить промокод")],
+            [KeyboardButton(text="◀️ Назад к админке")]
+        ],
+        resize_keyboard=True
+    )
+    return keyboard
+
+def get_statistics_keyboard():
+    keyboard = ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="📈 Общая статистика"), KeyboardButton(text="📊 Популярные планы")],
+            [KeyboardButton(text="📅 Дневная активность")],
             [KeyboardButton(text="◀️ Назад к админке")]
         ],
         resize_keyboard=True
@@ -97,6 +110,13 @@ async def admin_promocodes(message: types.Message):
         await message.answer("⛔ Доступ запрещён")
         return
     await message.answer("🎟 Управление промокодами", reply_markup=get_promocodes_keyboard())
+
+@router.message(F.text == "📊 Статистика")
+async def admin_statistics(message: types.Message):
+    if not await _is_admin(str(message.from_user.id)):
+        await message.answer("⛔ Доступ запрещён")
+        return
+    await message.answer("📊 Статистика бота", reply_markup=get_statistics_keyboard())
 
 @router.message(F.text == "◀️ Назад")
 async def back_to_main(message: types.Message):
@@ -464,3 +484,98 @@ async def handle_promocode_input(message: types.Message):
     except Exception as e:
         await message.answer(f"❌ Ошибка при применении промокода: {str(e)}")
         promo_state.pop(user_id, None)
+
+
+# =================== СТАТИСТИКА ===================
+
+@router.message(F.text == "📈 Общая статистика")
+async def admin_general_stats(message: types.Message):
+    if not await _is_admin(str(message.from_user.id)):
+        await message.answer("⛔ Доступ запрещён")
+        return
+    
+    try:
+        # Получаем статистику
+        stats = await get_monthly_statistics()
+        
+        if not stats:
+            await message.answer("❌ Не удалось получить статистику")
+            return
+        
+        # Форматируем статистику
+        stats_text = (
+            f"📊 <b>Общая статистика (за {stats['period_days']} дней)</b>\n\n"
+            f"👥 <b>Пользователи:</b>\n"
+            f"├ Всего: {stats['total_users']}\n"
+            f"├ Новых за месяц: {stats['new_users_month']}\n"
+            f"└ С активной подпиской: {stats['active_subscriptions']}\n\n"
+            f"💰 <b>Финансы:</b>\n"
+            f"├ Доход за месяц: {stats['total_revenue_month']:.2f} ₽\n"
+            f"└ Успешных платежей: {stats['successful_payments_month']}\n\n"
+            f"🎟 <b>Промокоды:</b>\n"
+            f"└ Использовано за месяц: {stats['used_promos_month']}\n\n"
+            f"🔍 <b>Отслеживания:</b>\n"
+            f"└ Активных: {stats['active_trackings']}\n\n"
+            f"📅 <i>Обновлено: {stats['generated_at'].strftime('%d.%m.%Y %H:%M')}</i>"
+        )
+        
+        await message.answer(stats_text, parse_mode="HTML")
+        
+    except Exception as e:
+        await message.answer(f"❌ Ошибка при получении статистики: {str(e)}")
+
+
+@router.message(F.text == "📊 Популярные планы")
+async def admin_popular_plans(message: types.Message):
+    if not await _is_admin(str(message.from_user.id)):
+        await message.answer("⛔ Доступ запрещён")
+        return
+    
+    try:
+        plans = await get_popular_subscription_plans()
+        
+        if not plans:
+            await message.answer("📊 За последний месяц подписок не было")
+            return
+        
+        plans_text = "📊 <b>Популярные планы подписок (за 30 дней)</b>\n\n"
+        
+        for i, plan in enumerate(plans, 1):
+            plans_text += (
+                f"{i}. <b>{plan['name']}</b>\n"
+                f"   💰 Цена: {plan['price']:.2f} ₽\n"
+                f"   🛒 Покупок: {plan['purchases']}\n\n"
+            )
+        
+        await message.answer(plans_text, parse_mode="HTML")
+        
+    except Exception as e:
+        await message.answer(f"❌ Ошибка при получении статистики планов: {str(e)}")
+
+
+@router.message(F.text == "📅 Дневная активность")
+async def admin_daily_activity(message: types.Message):
+    if not await _is_admin(str(message.from_user.id)):
+        await message.answer("⛔ Доступ запрещён")
+        return
+    
+    try:
+        daily_stats = await get_daily_activity_stats(7)
+        
+        if not daily_stats:
+            await message.answer("❌ Не удалось получить дневную статистику")
+            return
+        
+        activity_text = "📅 <b>Активность за последние 7 дней</b>\n\n"
+        
+        for day in daily_stats:
+            activity_text += (
+                f"📆 <b>{day['date']}</b>\n"
+                f"├ Новых пользователей: {day['new_users']}\n"
+                f"└ Успешных платежей: {day['successful_payments']}\n\n"
+            )
+        
+        await message.answer(activity_text, parse_mode="HTML")
+        
+    except Exception as e:
+        await message.answer(f"❌ Ошибка при получении дневной статистики: {str(e)}")
