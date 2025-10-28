@@ -1,12 +1,11 @@
 import asyncio
 from aiogram import Bot
-from app.db import get_all_active_tracked_items, get_all_active_tracked_searches, update_tracked_item_state, update_tracked_search_state, AsyncSessionLocal, TrackedItem
+from app.db import get_all_active_tracked_items, AsyncSessionLocal, TrackedItem
 from sqlalchemy import select
-from app.avito_api import AvitoAPI
 from app.config import PRICE_CHANGE_THRESHOLD, CHECK_INTERVAL
 from datetime import datetime
 
-api = AvitoAPI()
+# Мониторинг по фильтрам теперь выполняет parse_avito сервис
 
 
 async def check_tracked_items(bot: Bot):
@@ -25,7 +24,8 @@ async def check_tracked_items(bot: Bot):
                 if not user:
                     continue
             
-            item_details = await api.get_item_details(tracked_item.item_id)
+            # TODO: добавить парсинг через внешний API
+            item_details = None
             
             # Если объявление удалено
             if not item_details:
@@ -110,75 +110,12 @@ async def check_tracked_items(bot: Bot):
 
 
 async def check_tracked_searches(bot: Bot):
-    """Проверка новых объявлений по фильтрам"""
-    tracked_searches = await get_all_active_tracked_searches()
-    
-    for tracked_search in tracked_searches:
-        try:
-            # Получаем пользователя для отправки уведомления
-            from app.db import User
-            async with AsyncSessionLocal() as session:
-                result = await session.execute(
-                    select(User).where(User.id == tracked_search.user_id)
-                )
-                user = result.scalar_one_or_none()
-                if not user:
-                    continue
-            
-            # Выполняем поиск
-            results = await api.search_items(
-                category_id=tracked_search.category_id,
-                location_id=tracked_search.location_id,
-                search_query=tracked_search.search_query,
-                price_from=tracked_search.price_from,
-                price_to=tracked_search.price_to,
-                sort_by="date",
-                per_page=50
-            )
-            
-            if not results or not results.get('items'):
-                continue
-            
-            # Получаем ID текущих найденных объявлений
-            current_item_ids = [str(item.get('id', '')) for item in results['items']]
-            last_found_ids = tracked_search.last_found_item_ids or []
-            
-            # Находим новые объявления
-            new_item_ids = [item_id for item_id in current_item_ids if item_id not in last_found_ids]
-            
-            # Отправляем уведомления о новых объявлениях
-            for item_id in new_item_ids[:10]:  # Максимум 10 новых объявлений за раз
-                try:
-                    item_details = await api.get_item_details(item_id)
-                    if item_details:
-                        price = float(item_details.get('price', 0))
-                        title = item_details.get('title', 'Нет названия')
-                        location = item_details.get('location', 'Не указано')
-                        
-                        await bot.send_message(
-                            chat_id=int(user.telegram_id),
-                            text=(
-                                f"🆕 Новое объявление по вашему запросу!\n"
-                                f"📌 {title}\n"
-                                f"💰 Цена: {price:,.2f} ₽\n"
-                                f"📍 {location}\n"
-                                f"🔗 ID: {item_id}"
-                            )
-                        )
-                except Exception as e:
-                    print(f"Ошибка при отправке уведомления о новом объявлении: {e}")
-                    continue
-            
-            # Обновляем состояние в БД
-            if new_item_ids:
-                await update_tracked_search_state(tracked_search, current_item_ids)
-                
-        except Exception as e:
-            print(f"Ошибка при проверке поиска {tracked_search.id}: {e}")
-            continue
+    """Проверка новых объявлений по фильтрам - теперь выполняется parse_avito сервисом"""
+    # Мониторинг по фильтрам теперь выполняется в parse_avito
+    pass
 
 
 async def check_prices(bot: Bot):
-    """Главная функция проверки - проверяет и объявления, и поиски"""
+    """Главная функция проверки - проверяет только объявления по ID"""
+    # Мониторинг по фильтрам выполняется parse_avito
     await check_tracked_items(bot)
-    await check_tracked_searches(bot)

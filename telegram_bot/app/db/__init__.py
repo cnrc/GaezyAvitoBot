@@ -10,8 +10,6 @@ from .model import (
     Promocode,
     PromoUsage,
     UserActivePromocode,
-    TrackedItem,
-    TrackedSearch,
     AsyncSessionLocal,
     init_models
 )
@@ -31,20 +29,6 @@ from .repository import (
     set_user_active_promocode,
     get_user_current_promocode,
     clear_user_promocode,
-    
-    # Отслеживание объявлений
-    add_tracked_item,
-    remove_tracked_item,
-    get_user_tracked_items,
-    get_all_active_tracked_items,
-    update_tracked_item_state,
-    
-    # Отслеживание поисков
-    add_tracked_search,
-    get_user_tracked_searches,
-    get_all_active_tracked_searches,
-    remove_tracked_search,
-    update_tracked_search_state,
 )
 
 __all__ = [
@@ -57,8 +41,6 @@ __all__ = [
     'Promocode',
     'PromoUsage',
     'UserActivePromocode',
-    'TrackedItem',
-    'TrackedSearch',
     'AsyncSessionLocal',
     'init_models',
     
@@ -71,15 +53,5 @@ __all__ = [
     'get_user_active_promocode',
     'set_user_active_promocode',
     'get_user_current_promocode',
-    'clear_user_promocode',
-    'add_tracked_item',
-    'remove_tracked_item',
-    'get_user_tracked_items',
-    'get_all_active_tracked_items',
-    'update_tracked_item_state',
-    'add_tracked_search',
-    'get_user_tracked_searches',
-    'get_all_active_tracked_searches',
-    'remove_tracked_search',
-    'update_tracked_search_state',
+    'clear_user_promocode'
 ]

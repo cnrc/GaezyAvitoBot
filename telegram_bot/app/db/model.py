@@ -22,8 +22,6 @@ class User(Base):
     subscriptions = relationship("UserSubscription", back_populates="user")
     payments = relationship("Payment", back_populates="user")
     promo_usages = relationship("PromoUsage", back_populates="user")
-    tracked_items = relationship("TrackedItem", back_populates="user", cascade="all, delete-orphan")
-    tracked_searches = relationship("TrackedSearch", back_populates="user", cascade="all, delete-orphan")
     active_promocode = relationship("UserActivePromocode", back_populates="user", uselist=False, cascade="all, delete-orphan")
 
 class SubscriptionPlan(Base):
@@ -118,55 +116,6 @@ class UserActivePromocode(Base):
     user = relationship("User", back_populates="active_promocode")
     promocode = relationship("Promocode")
 
-
-class TrackedItem(Base):
-    """Отслеживание конкретных объявлений по ID"""
-    __tablename__ = 'tracked_items'
-    
-    id = Column(UUID(as_uuid=True), primary_key=True, server_default=text("uuid_generate_v4()"))
-    user_id = Column(UUID(as_uuid=True), ForeignKey('users.id', ondelete='CASCADE'), nullable=False)
-    
-    # ID объявления на Авито
-    item_id = Column(Text, nullable=False)
-    
-    # Последнее состояние объявления
-    last_price = Column(Numeric(10, 2), nullable=True)
-    last_title = Column(Text, nullable=True)
-    last_description = Column(Text, nullable=True)
-    
-    # Метаданные
-    created_at = Column(DateTime, default=datetime.utcnow)
-    last_checked_at = Column(DateTime, nullable=True)
-    is_active = Column(Boolean, default=True)
-    
-    # Relationships
-    user = relationship("User", back_populates="tracked_items")
-
-
-class TrackedSearch(Base):
-    """Отслеживание новых объявлений по фильтрам"""
-    __tablename__ = 'tracked_searches'
-    
-    id = Column(UUID(as_uuid=True), primary_key=True, server_default=text("uuid_generate_v4()"))
-    user_id = Column(UUID(as_uuid=True), ForeignKey('users.id', ondelete='CASCADE'), nullable=False)
-    
-    # Параметры поиска
-    search_query = Column(Text, nullable=True)
-    category_id = Column(Integer, nullable=True)
-    location_id = Column(Integer, nullable=True)
-    price_from = Column(Integer, nullable=True)
-    price_to = Column(Integer, nullable=True)
-    
-    # Состояние поиска (храним последние найденные ID в виде JSON)
-    last_found_item_ids = Column(JSONB, default=list)
-    
-    # Метаданные
-    created_at = Column(DateTime, default=datetime.utcnow)
-    last_checked_at = Column(DateTime, nullable=True)
-    is_active = Column(Boolean, default=True)
-    
-    # Relationships
-    user = relationship("User", back_populates="tracked_searches")
 
 
 async def init_models():

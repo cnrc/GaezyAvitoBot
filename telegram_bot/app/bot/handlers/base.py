@@ -14,9 +14,6 @@ async def get_main_keyboard(telegram_id: str = None):
     print(f"🔍 KEYBOARD: Создаем клавиатуру для пользователя {telegram_id}")
     keyboard_rows = []
 
-    # Кнопки для всех
-    common_row = [KeyboardButton(text="❓ Помощь")]
-
     # Проверяем подписку
     has_sub = False
     if telegram_id:
@@ -30,17 +27,14 @@ async def get_main_keyboard(telegram_id: str = None):
 
     if has_sub:
         print(f"🔍 KEYBOARD: Создаем клавиатуру для пользователя с подпиской")
-        # Полный набор функционала
-        keyboard_rows.append([KeyboardButton(text="🔍 Найти объявления"), KeyboardButton(text="📋 Мои отслеживаемые")])
-        keyboard_rows.append([KeyboardButton(text="⚙️ Управление")])
+        # Новые кнопки
+        keyboard_rows.append([KeyboardButton(text="📋 Мои отслеживания")])
+        keyboard_rows.append([KeyboardButton(text="➕ Добавить отслеживание")])
     else:
         print(f"🔍 KEYBOARD: Создаем клавиатуру для пользователя без подписки")
 
         # Кнопки для пользователей без подписки
         keyboard_rows.append([KeyboardButton(text="💳 Купить подписку"), KeyboardButton(text="🎟 Ввести промокод")])
-
-    # Добавляем общую строку
-    keyboard_rows.append(common_row)
 
     keyboard = ReplyKeyboardMarkup(
         keyboard=keyboard_rows,
@@ -131,22 +125,91 @@ async def start_command(message: types.Message):
         )
 
 
-@router.message(lambda message: message.text == "❓ Помощь")
-async def help_via_button(message: types.Message):
-    print(f"🔍 HELP HANDLER: ===== НАЧАЛО ОБРАБОТКИ КНОПКИ ПОМОЩИ =====")
-    print(f"🔍 HELP HANDLER: Получена кнопка '❓ Помощь' от пользователя {message.from_user.id}")
-    print(f"🔍 HELP HANDLER: Текст сообщения: '{message.text}'")
-    print(f"🔍 HELP HANDLER: Начинаем обработку кнопки помощи")
+@router.message(lambda message: message.text == "📋 Мои отслеживания")
+async def my_trackings(message: types.Message):
+    """Показать активные фильтры пользователя"""
+    from app.db import get_user_tracked_searches, get_user_tracked_items
+    
+    user_id = str(message.from_user.id)
+    
+    # Получаем фильтры (TrackedSearch)
+    tracked_searches = await get_user_tracked_searches(user_id)
+    
+    if not tracked_searches:
+        await message.answer("📋 У вас нет активных фильтров для отслеживания.")
+        return
+    
+    msg = "📋 <b>Ваши активные фильтры:</b>\n\n"
+    for i, search in enumerate(tracked_searches, 1):
+        msg += f"{i}. "
+        
+        if search.search_query:
+            msg += f"Запрос: {search.search_query}\n"
+        if search.category_id:
+            msg += f"Категория ID: {search.category_id}\n"
+        if search.location_id:
+            msg += f"Локация ID: {search.location_id}\n"
+        if search.price_from:
+            msg += f"Цена от: {search.price_from}\n"
+        if search.price_to:
+            msg += f"Цена до: {search.price_to}\n"
+        
+        msg += "\n"
+    
+    await message.answer(msg, parse_mode="HTML")
+
+
+@router.message(lambda message: message.text == "➕ Добавить отслеживание")
+async def add_tracking_menu(message: types.Message):
+    """Показать меню добавления отслеживания"""
+    keyboard = ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="🆔 Отслеживание по ID"), KeyboardButton(text="🔍 Отслеживание по фильтрам")],
+            [KeyboardButton(text="◀️ Назад")]
+        ],
+        resize_keyboard=True
+    )
+    
     await message.answer(
-        "❓ <b>Помощь по использованию</b>\n\n"
-        "<b>Как отслеживать объявления:</b>\n"
-        "1. Найдите объявление на Avito\n"
-        "2. Скопируйте ID из ссылки\n"
-        "3. Отправьте ID боту\n\n"
-        "<b>Пример:</b>\n"
-        "<code>123456789</code>\n\n"
-        "<b>Поиск объявлений:</b>\n"
-        "Нажмите '🔍 Найти объявления' и введите запрос",
+        "➕ <b>Добавить отслеживание</b>\n\n"
+        "Выберите тип отслеживания:",
+        reply_markup=keyboard,
+        parse_mode="HTML"
+    )
+
+
+@router.message(lambda message: message.text == "🆔 Отслеживание по ID")
+async def tracking_by_id(message: types.Message):
+    """Инициировать отслеживание по ID"""
+    await message.answer(
+        "🆔 <b>Отслеживание по ID</b>\n\n"
+        "Введите ID объявления из ссылки Avito:\n"
+        "Например: <code>123456789</code>",
+        parse_mode="HTML"
+    )
+
+
+@router.message(lambda message: message.text == "🔍 Отслеживание по фильтрам")
+async def tracking_by_filters(message: types.Message):
+    """Инициировать отслеживание по фильтрам"""
+    await message.answer(
+        "🔍 <b>Отслеживание по фильтрам</b>\n\n"
+        "Введите параметры поиска в формате:\n"
+        "<b>Запрос | Категория | Город | Цена от | Цена до</b>\n\n"
+        "Например:\n"
+        "<code>iPhone 13 | Электроника | Москва | 50000 | 80000</code>\n\n"
+        "Необязательные поля можно пропустить.",
+        parse_mode="HTML"
+    )
+
+
+@router.message(lambda message: message.text == "◀️ Назад")
+async def back_to_main(message: types.Message):
+    """Вернуться в главное меню"""
+    keyboard = await get_main_keyboard(str(message.from_user.id))
+    await message.answer(
+        "🏠 <b>Главное меню</b>",
+        reply_markup=keyboard,
         parse_mode="HTML"
     )
 
