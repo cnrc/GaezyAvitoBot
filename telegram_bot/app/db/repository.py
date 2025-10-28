@@ -636,3 +636,99 @@ async def get_daily_activity_stats(days: int = 7) -> list:
         return []
 
 
+# =================== УВЕДОМЛЕНИЯ ===================
+
+async def get_all_users() -> list:
+    """Получает всех пользователей для рассылки уведомлений."""
+    try:
+        async with AsyncSessionLocal() as session:
+            result = await session.execute(select(User))
+            users = result.scalars().all()
+            return [{'telegram_id': user.telegram_id, 'is_admin': user.is_admin} for user in users]
+    except Exception as e:
+        print(f"❌ Ошибка при получении всех пользователей: {e}")
+        import traceback
+        traceback.print_exc()
+        return []
+
+
+async def get_users_with_active_subscription() -> list:
+    """Получает пользователей с активной подпиской."""
+    try:
+        async with AsyncSessionLocal() as session:
+            from datetime import datetime
+            
+            result = await session.execute(
+                select(User)
+                .join(UserSubscription, User.id == UserSubscription.user_id)
+                .where(UserSubscription.end_date > datetime.utcnow())
+                .distinct()
+            )
+            users = result.scalars().all()
+            return [{'telegram_id': user.telegram_id, 'is_admin': user.is_admin} for user in users]
+    except Exception as e:
+        print(f"❌ Ошибка при получении пользователей с подпиской: {e}")
+        import traceback
+        traceback.print_exc()
+        return []
+
+
+async def get_users_without_active_subscription() -> list:
+    """Получает пользователей без активной подписки."""
+    try:
+        async with AsyncSessionLocal() as session:
+            from datetime import datetime
+            from sqlalchemy import and_, not_, exists
+            
+            # Подзапрос для проверки наличия активной подписки
+            active_subscription_subquery = (
+                select(UserSubscription.user_id)
+                .where(UserSubscription.end_date > datetime.utcnow())
+            )
+            
+            result = await session.execute(
+                select(User)
+                .where(not_(User.id.in_(active_subscription_subquery)))
+            )
+            users = result.scalars().all()
+            return [{'telegram_id': user.telegram_id, 'is_admin': user.is_admin} for user in users]
+    except Exception as e:
+        print(f"❌ Ошибка при получении пользователей без подписки: {e}")
+        import traceback
+        traceback.print_exc()
+        return []
+
+
+async def get_notification_stats() -> dict:
+    """Получает статистику для уведомлений."""
+    try:
+        async with AsyncSessionLocal() as session:
+            from datetime import datetime
+            from sqlalchemy import func
+            
+            # Всего пользователей
+            total_users_result = await session.execute(select(func.count(User.id)))
+            total_users = total_users_result.scalar() or 0
+            
+            # С активной подпиской
+            active_sub_result = await session.execute(
+                select(func.count(UserSubscription.user_id.distinct()))
+                .where(UserSubscription.end_date > datetime.utcnow())
+            )
+            with_subscription = active_sub_result.scalar() or 0
+            
+            # Без активной подписки
+            without_subscription = total_users - with_subscription
+            
+            return {
+                'total_users': total_users,
+                'with_subscription': with_subscription,
+                'without_subscription': without_subscription
+            }
+    except Exception as e:
+        print(f"❌ Ошибка при получении статистики уведомлений: {e}")
+        import traceback
+        traceback.print_exc()
+        return {'total_users': 0, 'with_subscription': 0, 'without_subscription': 0}
+
+

@@ -43,6 +43,13 @@ async def main():
     
     dp.include_router(search.router)     # "🔍 Найти объявления"
 
+    # Устанавливаем команды бота (только /start и /help)
+    commands = [
+        BotCommand(command="start", description="🏠 Запустить бота"),
+        BotCommand(command="help", description="❓ Помощь")
+    ]
+    await bot.set_my_commands(commands)
+
     # Запуск фоновой задачи проверки цен (каждые 5 минут)
     async def loop_check():
         while True:

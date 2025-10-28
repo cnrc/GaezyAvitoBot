@@ -44,7 +44,13 @@ from .repository import (
     # Функции статистики
     get_monthly_statistics,
     get_popular_subscription_plans,
-    get_daily_activity_stats
+    get_daily_activity_stats,
+    
+    # Функции уведомлений
+    get_all_users,
+    get_users_with_active_subscription,
+    get_users_without_active_subscription,
+    get_notification_stats
 )
 
 __all__ = [
@@ -87,5 +93,11 @@ __all__ = [
     # Функции статистики
     'get_monthly_statistics',
     'get_popular_subscription_plans',
-    'get_daily_activity_stats'
+    'get_daily_activity_stats',
+    
+    # Функции уведомлений
+    'get_all_users',
+    'get_users_with_active_subscription',
+    'get_users_without_active_subscription',
+    'get_notification_stats'
 ]

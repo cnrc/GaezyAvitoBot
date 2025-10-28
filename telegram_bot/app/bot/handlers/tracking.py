@@ -11,52 +11,7 @@ router = Router()
 print("🔍 TRACKING MODULE: Модуль tracking.py загружен")
 
 # Состояния для добавления отслеживания
-tracking_states = {}  # user_id: {"state": "waiting_name", "link": "...", "min_price": ..., "max_price": ...}
-
-
-
-# Обработчик кнопки "➕ Добавить отслеживание" находится в base.py
-
-
-# Обработчик кнопки "⚙️ Управлять отслеживаниями" находится в base.py
-
-
-@router.message(lambda message: message.text and message.text.startswith("/test_tracking"))
-async def test_tracking_handler(message: types.Message):
-    """Тест обработчика отслеживания для диагностики"""
-    print(f"🔍 TEST TRACKING: Тестовая команда получена от пользователя {message.from_user.id}")
-    await message.answer("✅ Обработчик отслеживания работает! Попробуйте отправить ссылку на Avito.")
-
-
-@router.message(lambda message: message.text and message.text.startswith("/debug_tracking"))
-async def debug_tracking(message: types.Message):
-    """Отладочный обработчик для проверки функции отслеживания"""
-    
-    # Проверяем активную подписку
-    has_sub = await user_has_active_subscription(str(message.from_user.id))
-    if not has_sub:
-        await message.answer("⛔ Доступно только с активной подпиской.")
-        return
-    
-    # Пробуем добавить тестовое отслеживание
-    try:
-        success = await add_tracking(
-            telegram_id=str(message.from_user.id),
-            link="https://www.avito.ru/test/test/test_123456789",
-            min_price=1000,
-            max_price=5000
-        )
-        
-        if success:
-            await message.answer("✅ Тестовое отслеживание добавлено успешно!")
-        else:
-            await message.answer("❌ Ошибка при добавлении тестового отслеживания.")
-            
-    except Exception as e:
-        await message.answer(f"❌ Исключение: {str(e)}")
-        print(f"Debug error: {e}")
-        import traceback
-        traceback.print_exc()
+tracking_states = {}  
 
 
 @router.message(lambda message: message.text and "avito.ru" in message.text.lower())
