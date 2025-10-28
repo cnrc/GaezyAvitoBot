@@ -74,7 +74,7 @@ async def buy_subscription(message: types.Message):
     
     try:
         # Проверяем, есть ли у пользователя активная подписка
-        from ...db.model import user_has_active_subscription
+        from ...db import user_has_active_subscription
         has_subscription = await user_has_active_subscription(str(message.from_user.id))
         
         if has_subscription:

@@ -10,8 +10,18 @@ from .model import (
     Promocode,
     PromoUsage,
     UserActivePromocode,
+    Tracked,
     AsyncSessionLocal,
-    init_models
+    init_models,
+    # Функции для отслеживания
+    add_tracking,
+    get_user_trackings,
+    archive_tracking,
+    archive_all_user_trackings,
+    restore_tracking,
+    delete_tracking,
+    get_all_active_tracked_items,
+    update_tracked_item_state
 )
 
 from .repository import (
@@ -41,17 +51,30 @@ __all__ = [
     'Promocode',
     'PromoUsage',
     'UserActivePromocode',
+    'Tracked',
     'AsyncSessionLocal',
     'init_models',
     
-    # Функции
+    # Функции пользователей
     'get_or_create_user',
     'user_has_active_subscription',
     'user_has_ever_had_subscription',
     'create_trial_subscription',
+    
+    # Функции промокодов
     'user_has_used_promocode',
     'get_user_active_promocode',
     'set_user_active_promocode',
     'get_user_current_promocode',
-    'clear_user_promocode'
+    'clear_user_promocode',
+    
+    # Функции отслеживания
+    'add_tracking',
+    'get_user_trackings',
+    'archive_tracking',
+    'archive_all_user_trackings',
+    'restore_tracking',
+    'delete_tracking',
+    'get_all_active_tracked_items',
+    'update_tracked_item_state'
 ]

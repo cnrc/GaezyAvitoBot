@@ -4,11 +4,13 @@
 from aiogram import Router, types
 from aiogram.filters import Command
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
-from ...db.model import get_or_create_user, user_has_active_subscription, UserSubscription, user_has_ever_had_subscription, create_trial_subscription
+from ...db import get_or_create_user, user_has_active_subscription, user_has_ever_had_subscription, create_trial_subscription
+from ...db.model import UserSubscription
 
 router = Router()
 
 print("🔍 BASE MODULE: Модуль base.py загружен")
+
 
 async def get_main_keyboard(telegram_id: str = None):
     print(f"🔍 KEYBOARD: Создаем клавиатуру для пользователя {telegram_id}")
@@ -27,9 +29,8 @@ async def get_main_keyboard(telegram_id: str = None):
 
     if has_sub:
         print(f"🔍 KEYBOARD: Создаем клавиатуру для пользователя с подпиской")
-        # Новые кнопки
-        keyboard_rows.append([KeyboardButton(text="📋 Мои отслеживания")])
-        keyboard_rows.append([KeyboardButton(text="➕ Добавить отслеживание")])
+        # Кнопки для пользователей с подпиской
+        keyboard_rows.append([KeyboardButton(text="➕ Добавить отслеживание"), KeyboardButton(text="📋 Мои отслеживания")])
     else:
         print(f"🔍 KEYBOARD: Создаем клавиатуру для пользователя без подписки")
 
@@ -41,17 +42,6 @@ async def get_main_keyboard(telegram_id: str = None):
         resize_keyboard=True
     )
     print(f"🔍 KEYBOARD: Клавиатура создана с {len(keyboard_rows)} строками")
-    return keyboard
-
-
-def get_management_keyboard():
-    keyboard = ReplyKeyboardMarkup(
-        keyboard=[
-            [KeyboardButton(text="🗑️ Удалить объявление"), KeyboardButton(text="🔄 Обновить цены")],
-            [KeyboardButton(text="◀️ Назад")]
-        ],
-        resize_keyboard=True
-    )
     return keyboard
 
 @router.message(Command("start"))
@@ -125,92 +115,81 @@ async def start_command(message: types.Message):
         )
 
 
-@router.message(lambda message: message.text == "📋 Мои отслеживания")
-async def my_trackings(message: types.Message):
-    """Показать активные фильтры пользователя"""
-    from app.db import get_user_tracked_searches, get_user_tracked_items
-    
-    user_id = str(message.from_user.id)
-    
-    # Получаем фильтры (TrackedSearch)
-    tracked_searches = await get_user_tracked_searches(user_id)
-    
-    if not tracked_searches:
-        await message.answer("📋 У вас нет активных фильтров для отслеживания.")
-        return
-    
-    msg = "📋 <b>Ваши активные фильтры:</b>\n\n"
-    for i, search in enumerate(tracked_searches, 1):
-        msg += f"{i}. "
-        
-        if search.search_query:
-            msg += f"Запрос: {search.search_query}\n"
-        if search.category_id:
-            msg += f"Категория ID: {search.category_id}\n"
-        if search.location_id:
-            msg += f"Локация ID: {search.location_id}\n"
-        if search.price_from:
-            msg += f"Цена от: {search.price_from}\n"
-        if search.price_to:
-            msg += f"Цена до: {search.price_to}\n"
-        
-        msg += "\n"
-    
-    await message.answer(msg, parse_mode="HTML")
-
-
 @router.message(lambda message: message.text == "➕ Добавить отслеживание")
 async def add_tracking_menu(message: types.Message):
     """Показать меню добавления отслеживания"""
-    keyboard = ReplyKeyboardMarkup(
-        keyboard=[
-            [KeyboardButton(text="🆔 Отслеживание по ID"), KeyboardButton(text="🔍 Отслеживание по фильтрам")],
-            [KeyboardButton(text="◀️ Назад")]
-        ],
-        resize_keyboard=True
-    )
-    
+    # Проверяем активную подписку
+    has_sub = await user_has_active_subscription(str(message.from_user.id))
+    if not has_sub:
+        await message.answer("⛔ Доступно только с активной подпиской.")
+        return
+        
     await message.answer(
         "➕ <b>Добавить отслеживание</b>\n\n"
-        "Выберите тип отслеживания:",
-        reply_markup=keyboard,
-        parse_mode="HTML"
-    )
-
-
-@router.message(lambda message: message.text == "🆔 Отслеживание по ID")
-async def tracking_by_id(message: types.Message):
-    """Инициировать отслеживание по ID"""
-    await message.answer(
-        "🆔 <b>Отслеживание по ID</b>\n\n"
-        "Введите ID объявления из ссылки Avito:\n"
-        "Например: <code>123456789</code>",
-        parse_mode="HTML"
-    )
-
-
-@router.message(lambda message: message.text == "🔍 Отслеживание по фильтрам")
-async def tracking_by_filters(message: types.Message):
-    """Инициировать отслеживание по фильтрам"""
-    await message.answer(
-        "🔍 <b>Отслеживание по фильтрам</b>\n\n"
-        "Введите параметры поиска в формате:\n"
-        "<b>Запрос | Категория | Город | Цена от | Цена до</b>\n\n"
+        "🎯 <b>Отслеживание конкретного объявления:</b>\n"
+        "Введите ссылку на объявление Avito для отслеживания изменений цены.\n\n"
+        "Также можете указать ценовые фильтры в формате:\n"
+        "<code>ссылка | мин_цена | макс_цена</code>\n\n"
         "Например:\n"
-        "<code>iPhone 13 | Электроника | Москва | 50000 | 80000</code>\n\n"
-        "Необязательные поля можно пропустить.",
+        "<code>https://www.avito.ru/moskva/telefony/iphone_13_123456789 | 50000 | 80000</code>\n\n"
+        "Бот будет отслеживать изменения цены объявления и уведомлять вас при изменениях.",
         parse_mode="HTML"
     )
 
 
-@router.message(lambda message: message.text == "◀️ Назад")
-async def back_to_main(message: types.Message):
-    """Вернуться в главное меню"""
-    keyboard = await get_main_keyboard(str(message.from_user.id))
-    await message.answer(
-        "🏠 <b>Главное меню</b>",
-        reply_markup=keyboard,
-        parse_mode="HTML"
-    )
-
-
+@router.message(lambda message: message.text == "📋 Мои отслеживания")
+async def list_trackings(message: types.Message):
+    """Показать список отслеживаний с названиями и номерами"""
+    from ...db import get_user_trackings
+    
+    user_id = str(message.from_user.id)
+    
+    # Проверяем активную подписку
+    has_sub = await user_has_active_subscription(user_id)
+    if not has_sub:
+        await message.answer("⛔ Доступно только с активной подпиской.")
+        return
+    
+    # Получаем отслеживания (активные и архивированные)
+    active_trackings = await get_user_trackings(user_id, active_only=True)
+    all_trackings = await get_user_trackings(user_id, active_only=False)
+    archived_trackings = [t for t in all_trackings if not t.is_active]
+    
+    if not all_trackings:
+        await message.answer(
+            "📋 У вас нет отслеживаний.\n\n"
+            "Используйте кнопку '➕ Добавить отслеживание' чтобы начать отслеживать объявления."
+        )
+        return
+    
+    response = "📋 <b>Ваши отслеживания</b>\n\n"
+    
+    if active_trackings:
+        response += "🟢 <b>Активные:</b>\n"
+        for i, tracking in enumerate(active_trackings, 1):
+            name = tracking.name if tracking.name else f"Ссылка {i}"
+            response += f"<b>{i}.</b> {name}\n"
+            if tracking.min_price and tracking.max_price:
+                response += f"   💰 {tracking.min_price} - {tracking.max_price} ₽\n"
+            elif tracking.min_price:
+                response += f"   💰 от {tracking.min_price} ₽\n"
+            elif tracking.max_price:
+                response += f"   💰 до {tracking.max_price} ₽\n"
+            response += "\n"
+    
+    if archived_trackings:
+        response += "🟡 <b>Архивированные:</b>\n"
+        for i, tracking in enumerate(archived_trackings, len(active_trackings) + 1):
+            name = tracking.name if tracking.name else f"Ссылка {i}"
+            response += f"<b>{i}.</b> {name}\n"
+            if tracking.min_price and tracking.max_price:
+                response += f"   💰 {tracking.min_price} - {tracking.max_price} ₽\n"
+            elif tracking.min_price:
+                response += f"   💰 от {tracking.min_price} ₽\n"
+            elif tracking.max_price:
+                response += f"   💰 до {tracking.max_price} ₽\n"
+            response += "\n"
+    
+    response += "💡 <i>Для редактирования отправьте номер отслеживания</i>"
+    
+    await message.answer(response, parse_mode="HTML")

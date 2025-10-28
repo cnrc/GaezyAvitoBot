@@ -23,6 +23,7 @@ class User(Base):
     payments = relationship("Payment", back_populates="user")
     promo_usages = relationship("PromoUsage", back_populates="user")
     active_promocode = relationship("UserActivePromocode", back_populates="user", uselist=False, cascade="all, delete-orphan")
+    trackings = relationship("Tracked", back_populates="user", cascade="all, delete-orphan")
 
 class SubscriptionPlan(Base):
     __tablename__ = 'subscription_plans'
@@ -117,111 +118,38 @@ class UserActivePromocode(Base):
     promocode = relationship("Promocode")
 
 
+class Tracked(Base):
+    """Таблица отслеживаемых объявлений пользователя"""
+    __tablename__ = 'tracked'
+    
+    id = Column(UUID(as_uuid=True), primary_key=True, server_default=text("uuid_generate_v4()"))
+    user_id = Column(UUID(as_uuid=True), ForeignKey('users.id', ondelete='CASCADE'), nullable=False)
+    name = Column(Text, nullable=True)
+    link = Column(Text, nullable=False)
+    min_price = Column(Integer, nullable=True)
+    max_price = Column(Integer, nullable=True)
+    is_active = Column(Boolean, default=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow)
+    
+    # Relationships
+    user = relationship("User", back_populates="trackings")
+
+
 
 async def init_models():
     async with async_engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 
-async def get_or_create_user(telegram_id: str) -> User:
-    """Создаёт пользователя при первом запуске бота или возвращает существующего."""
-    print(f"🔍 DB: get_or_create_user вызвана для telegram_id: {telegram_id}")
-    
-    try:
-        async with AsyncSessionLocal() as session:
-            print(f"🔍 DB: Выполняем запрос для поиска пользователя {telegram_id}")
-            result = await session.execute(
-                select(User).where(User.telegram_id == telegram_id)
-            )
-            user = result.scalar_one_or_none()
-            
-            if user is None:
-                print(f"🔍 DB: Пользователь {telegram_id} не найден, создаем нового")
-                user = User(telegram_id=telegram_id)
-                session.add(user)
-                await session.commit()
-                await session.refresh(user)
-                print(f"🔍 DB: Пользователь {telegram_id} создан успешно")
-            else:
-                print(f"🔍 DB: Пользователь {telegram_id} найден")
-            
-            return user
-    except Exception as e:
-        print(f"❌ DB ERROR: Ошибка в get_or_create_user: {str(e)}")
-        import traceback
-        traceback.print_exc()
-        raise
+# Эти функции перенесены в repository.py для лучшей организации кода
 
-async def user_has_active_subscription(telegram_id: str) -> bool:
-    """Проверяет, есть ли у пользователя активная подписка (end_date > now)."""
-    print(f"🔍 DB: user_has_active_subscription вызвана для telegram_id: {telegram_id}")
-    
-    try:
-        async with AsyncSessionLocal() as session:
-            print(f"🔍 DB: Выполняем запрос для проверки подписки {telegram_id}")
-            result = await session.execute(
-                select(UserSubscription)
-                .join(User, User.id == UserSubscription.user_id)
-                .where(User.telegram_id == telegram_id)
-                .where(UserSubscription.end_date > datetime.utcnow())
-            )
-            has_subscription = result.first() is not None
-            print(f"🔍 DB: Пользователь {telegram_id} имеет активную подписку: {has_subscription}")
-            return has_subscription
-    except Exception as e:
-        print(f"❌ DB ERROR: Ошибка в user_has_active_subscription: {str(e)}")
-        import traceback
-        traceback.print_exc()
-        return False
+# Функции для работы с пользователями, подписками и промокодами перенесены в repository.py
 
-async def user_has_used_promocode(telegram_id: str) -> bool:
-    """Проверяет, использовал ли пользователь когда-либо промокод."""
-    async with AsyncSessionLocal() as session:
-        result = await session.execute(
-            select(PromoUsage)
-            .join(User, User.id == PromoUsage.user_id)
-            .where(User.telegram_id == telegram_id)
-        )
-        return result.first() is not None
 
-async def get_user_active_promocode(telegram_id: str) -> Promocode:
-    """Получает активный промокод пользователя (если есть)."""
-    async with AsyncSessionLocal() as session:
-        result = await session.execute(
-            select(Promocode)
-            .join(PromoUsage, PromoUsage.promo_id == Promocode.id)
-            .join(User, User.id == PromoUsage.user_id)
-            .where(User.telegram_id == telegram_id)
-            .where(Promocode.expired_at > datetime.utcnow())
-        )
-        return result.scalar_one_or_none()
+# Функции для работы с отслеживаниями
 
-# Глобальное хранилище активных промокодов пользователей (временное решение)
-user_active_promocodes = {}
-
-async def set_user_active_promocode(telegram_id: str, promocode: Promocode):
-    """Устанавливает активный промокод для пользователя."""
-    user_active_promocodes[telegram_id] = promocode
-
-async def get_user_current_promocode(telegram_id: str) -> Promocode:
-    """Получает текущий активный промокод пользователя (из временного хранилища)."""
-    return user_active_promocodes.get(telegram_id)
-
-async def clear_user_promocode(telegram_id: str):
-    """Очищает активный промокод пользователя."""
-    user_active_promocodes.pop(telegram_id, None)
-
-async def user_has_ever_had_subscription(telegram_id: str) -> bool:
-    """Проверяет, была ли у пользователя когда-либо подписка."""
-    async with AsyncSessionLocal() as session:
-        result = await session.execute(
-            select(UserSubscription)
-            .join(User, User.id == UserSubscription.user_id)
-            .where(User.telegram_id == telegram_id)
-        )
-        return result.first() is not None
-
-async def create_trial_subscription(telegram_id: str) -> bool:
-    """Создает trial подписку на 3 дня для нового пользователя."""
+async def add_tracking(telegram_id: str, link: str, name: str = None, min_price: int = None, max_price: int = None) -> bool:
+    """Добавляет новое отслеживание для пользователя."""
     try:
         async with AsyncSessionLocal() as session:
             # Получаем пользователя
@@ -231,40 +159,218 @@ async def create_trial_subscription(telegram_id: str) -> bool:
             user = result.scalar_one_or_none()
             
             if not user:
-                print(f"❌ Пользователь {telegram_id} не найден для создания trial подписки")
+                print(f"❌ Пользователь {telegram_id} не найден")
                 return False
             
-            # Получаем самый дешевый план для создания trial подписки
-            result = await session.execute(
-                select(SubscriptionPlan).where(SubscriptionPlan.is_active == True)
-            )
-            plans = result.scalars().all()
-            
-            if not plans:
-                print(f"❌ Нет доступных планов для создания trial подписки")
-                return False
-            
-            # Берем самый дешевый план
-            cheapest_plan = min(plans, key=lambda p: float(p.price))
-            
-            # Создаем trial подписку на 3 дня
-            start_date = datetime.utcnow()
-            end_date = start_date + timedelta(days=3)
-            
-            subscription = UserSubscription(
+            # Создаем новое отслеживание
+            tracking = Tracked(
                 user_id=user.id,
-                plan_id=cheapest_plan.id,
-                start_date=start_date,
-                end_date=end_date
+                name=name,
+                link=link,
+                min_price=min_price,
+                max_price=max_price,
+                is_active=True
             )
-            session.add(subscription)
+            session.add(tracking)
             await session.commit()
             
-            print(f"✅ Trial подписка создана для пользователя {telegram_id} до {end_date}")
+            print(f"✅ Добавлено отслеживание для пользователя {telegram_id}: {link}")
             return True
             
     except Exception as e:
-        print(f"❌ Ошибка при создании trial подписки: {e}")
+        print(f"❌ Ошибка при добавлении отслеживания: {e}")
+        import traceback
+        traceback.print_exc()
+        return False
+
+
+async def get_user_trackings(telegram_id: str, active_only: bool = True) -> list:
+    """Получает список отслеживаний пользователя."""
+    try:
+        async with AsyncSessionLocal() as session:
+            query = select(Tracked).join(User, User.id == Tracked.user_id).where(User.telegram_id == telegram_id)
+            
+            if active_only:
+                query = query.where(Tracked.is_active == True)
+            
+            result = await session.execute(query)
+            trackings = result.scalars().all()
+            
+            return trackings
+            
+    except Exception as e:
+        print(f"❌ Ошибка при получении отслеживаний: {e}")
+        import traceback
+        traceback.print_exc()
+        return []
+
+
+async def archive_tracking(telegram_id: str, tracking_id: str) -> bool:
+    """Архивирует отслеживание (устанавливает is_active = False)."""
+    try:
+        async with AsyncSessionLocal() as session:
+            # Получаем отслеживание пользователя
+            result = await session.execute(
+                select(Tracked).join(User, User.id == Tracked.user_id)
+                .where(User.telegram_id == telegram_id)
+                .where(Tracked.id == tracking_id)
+            )
+            tracking = result.scalar_one_or_none()
+            
+            if not tracking:
+                print(f"❌ Отслеживание {tracking_id} не найдено для пользователя {telegram_id}")
+                return False
+            
+            tracking.is_active = False
+            tracking.updated_at = datetime.utcnow()
+            await session.commit()
+            
+            print(f"✅ Отслеживание {tracking_id} заархивировано для пользователя {telegram_id}")
+            return True
+            
+    except Exception as e:
+        print(f"❌ Ошибка при архивировании отслеживания: {e}")
+        import traceback
+        traceback.print_exc()
+        return False
+
+
+async def archive_all_user_trackings(telegram_id: str) -> int:
+    """Архивирует все активные отслеживания пользователя. Возвращает количество заархивированных."""
+    try:
+        async with AsyncSessionLocal() as session:
+            # Получаем все активные отслеживания пользователя
+            result = await session.execute(
+                select(Tracked).join(User, User.id == Tracked.user_id)
+                .where(User.telegram_id == telegram_id)
+                .where(Tracked.is_active == True)
+            )
+            active_trackings = result.scalars().all()
+            
+            if not active_trackings:
+                return 0
+            
+            # Архивируем все активные отслеживания
+            archived_count = 0
+            for tracking in active_trackings:
+                tracking.is_active = False
+                tracking.updated_at = datetime.utcnow()
+                archived_count += 1
+            
+            await session.commit()
+            
+            print(f"✅ Заархивировано {archived_count} отслеживаний для пользователя {telegram_id}")
+            return archived_count
+            
+    except Exception as e:
+        print(f"❌ Ошибка при архивировании всех отслеживаний: {e}")
+        import traceback
+        traceback.print_exc()
+        return 0
+
+
+async def restore_tracking(telegram_id: str, tracking_id: str) -> bool:
+    """Восстанавливает отслеживание (устанавливает is_active = True)."""
+    try:
+        async with AsyncSessionLocal() as session:
+            # Получаем отслеживание пользователя
+            result = await session.execute(
+                select(Tracked).join(User, User.id == Tracked.user_id)
+                .where(User.telegram_id == telegram_id)
+                .where(Tracked.id == tracking_id)
+            )
+            tracking = result.scalar_one_or_none()
+            
+            if not tracking:
+                print(f"❌ Отслеживание {tracking_id} не найдено для пользователя {telegram_id}")
+                return False
+            
+            tracking.is_active = True
+            tracking.updated_at = datetime.utcnow()
+            await session.commit()
+            
+            print(f"✅ Отслеживание {tracking_id} восстановлено для пользователя {telegram_id}")
+            return True
+            
+    except Exception as e:
+        print(f"❌ Ошибка при восстановлении отслеживания: {e}")
+        import traceback
+        traceback.print_exc()
+        return False
+
+
+async def delete_tracking(telegram_id: str, tracking_id: str) -> bool:
+    """Удаляет отслеживание пользователя."""
+    try:
+        async with AsyncSessionLocal() as session:
+            # Получаем отслеживание пользователя
+            result = await session.execute(
+                select(Tracked).join(User, User.id == Tracked.user_id)
+                .where(User.telegram_id == telegram_id)
+                .where(Tracked.id == tracking_id)
+            )
+            tracking = result.scalar_one_or_none()
+            
+            if not tracking:
+                print(f"❌ Отслеживание {tracking_id} не найдено для пользователя {telegram_id}")
+                return False
+            
+            await session.delete(tracking)
+            await session.commit()
+            
+            print(f"✅ Отслеживание {tracking_id} удалено для пользователя {telegram_id}")
+            return True
+            
+    except Exception as e:
+        print(f"❌ Ошибка при удалении отслеживания: {e}")
+        import traceback
+        traceback.print_exc()
+        return False
+
+
+async def get_all_active_tracked_items() -> list:
+    """Получает все активные отслеживания для проверки планировщиком."""
+    try:
+        async with AsyncSessionLocal() as session:
+            result = await session.execute(
+                select(Tracked).where(Tracked.is_active == True)
+            )
+            trackings = result.scalars().all()
+            return trackings
+            
+    except Exception as e:
+        print(f"❌ Ошибка при получении всех активных отслеживаний: {e}")
+        import traceback
+        traceback.print_exc()
+        return []
+
+
+async def update_tracked_item_state(tracking: Tracked, price: float = None, title: str = None, description: str = None) -> bool:
+    """Обновляет состояние отслеживаемого объявления."""
+    try:
+        async with AsyncSessionLocal() as session:
+            # Получаем отслеживание по ID для обновления
+            result = await session.execute(
+                select(Tracked).where(Tracked.id == tracking.id)
+            )
+            tracked_item = result.scalar_one_or_none()
+            
+            if not tracked_item:
+                print(f"❌ Отслеживание {tracking.id} не найдено для обновления")
+                return False
+            
+            # Обновляем поля (пока у нас простая модель, расширим при необходимости)
+            tracked_item.updated_at = datetime.utcnow()
+            
+            # TODO: При необходимости можно добавить поля last_price, last_title, last_description в модель
+            
+            await session.commit()
+            
+            print(f"✅ Состояние отслеживания {tracking.id} обновлено")
+            return True
+            
+    except Exception as e:
+        print(f"❌ Ошибка при обновлении состояния отслеживания: {e}")
         import traceback
         traceback.print_exc()
         return False

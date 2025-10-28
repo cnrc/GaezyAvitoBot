@@ -1,21 +1,19 @@
 import asyncio
 from aiogram import Bot
-from app.db import get_all_active_tracked_items, AsyncSessionLocal, TrackedItem
+from app.db import get_all_active_tracked_items, AsyncSessionLocal, Tracked, User
 from sqlalchemy import select
-from app.config import PRICE_CHANGE_THRESHOLD, CHECK_INTERVAL
 from datetime import datetime
 
 # Мониторинг по фильтрам теперь выполняет parse_avito сервис
 
 
 async def check_tracked_items(bot: Bot):
-    """Проверка конкретных объявлений по ID"""
+    """Проверка конкретных объявлений по ссылкам"""
     tracked_items = await get_all_active_tracked_items()
     
     for tracked_item in tracked_items:
         try:
-            # Получаем пользователя один раз
-            from app.db import User
+            # Получаем пользователя
             async with AsyncSessionLocal() as session:
                 result = await session.execute(
                     select(User).where(User.id == tracked_item.user_id)
@@ -24,88 +22,59 @@ async def check_tracked_items(bot: Bot):
                 if not user:
                     continue
             
-            # TODO: добавить парсинг через внешний API
+            # TODO: Интеграция с парсером Avito для получения данных объявления
+            # Пока что эта функция не активна, так как нужно интегрировать
+            # с parser_avito для получения актуальных данных по ссылке
+            
+            # item_details = await parse_avito_item(tracked_item.link)
             item_details = None
             
-            # Если объявление удалено
+            # Если не удалось получить данные объявления
             if not item_details:
-                # Архивируем объявление
-                async with AsyncSessionLocal() as session:
-                    result = await session.execute(
-                        select(TrackedItem).where(TrackedItem.id == tracked_item.id)
-                    )
-                    item = result.scalar_one_or_none()
-                    if item:
-                        item.is_active = False
-                        await session.commit()
-                
-                await bot.send_message(
-                    chat_id=int(user.telegram_id),
-                    text=f"❌ Объявление {tracked_item.item_id} больше не доступно и удалено из отслеживания"
-                )
+                # Пока не архивируем автоматически, так как это может быть
+                # временная проблема с парсером
+                print(f"🔍 Не удалось получить данные для {tracked_item.link}")
                 continue
             
             current_price = float(item_details.get('price', 0))
             current_title = item_details.get('title', '')
-            current_description = item_details.get('description', '')
             
-            price_changed = False
-            title_changed = False
-            description_changed = False
+            # Проверяем ценовые фильтры пользователя
+            price_in_range = True
             
-            # Проверяем изменения цены
-            if tracked_item.last_price is not None and current_price != tracked_item.last_price:
-                price_change = ((current_price - tracked_item.last_price) / tracked_item.last_price) * 100 if tracked_item.last_price > 0 else 0
-                if abs(price_change) >= PRICE_CHANGE_THRESHOLD:
-                    price_changed = True
-                    direction = "выросла" if current_price > tracked_item.last_price else "снизилась"
-                    await bot.send_message(
-                        chat_id=int(user.telegram_id),
-                        text=(
-                            f"🚨 Изменение цены в объявлении!\n"
-                            f"ID: {tracked_item.item_id}\n"
-                            f"Название: {current_title}\n"
-                            f"Цена {direction} на {abs(price_change):.2f}%\n"
-                            f"С {tracked_item.last_price:,.2f} ₽ до {current_price:,.2f} ₽"
-                        )
-                    )
+            if tracked_item.min_price and current_price < tracked_item.min_price:
+                price_in_range = False
+                
+            if tracked_item.max_price and current_price > tracked_item.max_price:
+                price_in_range = False
             
-            # Проверяем изменения названия
-            if tracked_item.last_title and current_title != tracked_item.last_title:
-                title_changed = True
+            # Если цена не в диапазоне, отправляем уведомление
+            if not price_in_range:
+                range_text = ""
+                if tracked_item.min_price and tracked_item.max_price:
+                    range_text = f"(ваш диапазон: {tracked_item.min_price:,.0f} - {tracked_item.max_price:,.0f} ₽)"
+                elif tracked_item.min_price:
+                    range_text = f"(ваш минимум: {tracked_item.min_price:,.0f} ₽)"
+                elif tracked_item.max_price:
+                    range_text = f"(ваш максимум: {tracked_item.max_price:,.0f} ₽)"
+                
                 await bot.send_message(
                     chat_id=int(user.telegram_id),
                     text=(
-                        f"📝 Изменение названия объявления!\n"
-                        f"ID: {tracked_item.item_id}\n"
-                        f"Старое: {tracked_item.last_title}\n"
-                        f"Новое: {current_title}"
-                    )
+                        f"💰 <b>Изменение цены!</b>\n\n"
+                        f"📋 {current_title}\n"
+                        f"💵 Новая цена: {current_price:,.0f} ₽ {range_text}\n"
+                        f"🔗 {tracked_item.link}"
+                    ),
+                    parse_mode="HTML"
                 )
             
-            # Проверяем изменения описания
-            if tracked_item.last_description and current_description != tracked_item.last_description:
-                description_changed = True
-                await bot.send_message(
-                    chat_id=int(user.telegram_id),
-                    text=(
-                        f"📝 Изменение описания объявления!\n"
-                        f"ID: {tracked_item.item_id}\n"
-                        f"Название: {current_title}"
-                    )
-                )
-            
-            # Обновляем состояние в БД
-            if price_changed or title_changed or description_changed:
-                await update_tracked_item_state(
-                    tracked_item,
-                    price=current_price,
-                    title=current_title,
-                    description=current_description
-                )
+            # Обновляем время последней проверки
+            from app.db import update_tracked_item_state
+            await update_tracked_item_state(tracked_item)
                 
         except Exception as e:
-            print(f"Ошибка при проверке объявления {tracked_item.item_id}: {e}")
+            print(f"Ошибка при проверке объявления {tracked_item.link}: {e}")
             continue
 
 

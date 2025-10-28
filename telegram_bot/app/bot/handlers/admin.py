@@ -395,16 +395,16 @@ async def cancel_promocode_input(message: types.Message):
         parse_mode="HTML"
     )
 
-@router.message(lambda message: message.text not in {
-    "🎟 Ввести промокод", "❌ Отменить ввод"
-})
+@router.message(lambda message: (
+    message.text and 
+    message.text not in {"🎟 Ввести промокод", "❌ Отменить ввод"} and
+    message.from_user.id in promo_state and 
+    promo_state[message.from_user.id] == "enter_promo" and
+    "avito.ru" not in message.text.lower()  # Исключаем ссылки на Avito
+))
 async def handle_promocode_input(message: types.Message):
     """Обработчик ввода промокода"""
     user_id = message.from_user.id
-    
-    # Проверяем, находится ли пользователь в состоянии ввода промокода
-    if user_id not in promo_state or promo_state[user_id] != "enter_promo":
-        return
     
     promo_code = message.text.strip().upper()
     
