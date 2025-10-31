@@ -1,6 +1,7 @@
 """
 Обработчики для покупки подписки и платежей
 """
+import json
 from aiogram import Router, types, F
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, LabeledPrice
 from sqlalchemy import select
@@ -159,29 +160,52 @@ async def handle_buy_plan(callback: types.CallbackQuery):
                 title = f"Подписка {plan.name}"
                 description = f"Подписка на {plan.duration_days} дней для мониторинга цен на Avito"
             
+            # Сумма в копейках
+            amount = int(final_price * 100)
+            # Минимальная сумма для Telegram - 1 рубль (100 копеек), но для ЮKassa обычно минимум 60 рублей
+            amount = max(amount, 6000)
+            
+            # Создаем provider_data для чека ЮKassa
+            provider_data = {
+                "receipt": {
+                    "items": [
+                        {
+                            "description": description,
+                            "quantity": "1.00",
+                            "amount": {
+                                "value": f"{final_price:.2f}",
+                                "currency": "RUB",
+                            },
+                            "vat_code": 1,  # без НДС
+                            "payment_mode": "full_prepayment",
+                            "payment_subject": "service",
+                        }
+                    ]
+                }
+            }
+            
+            # Формируем параметры инвойса
+            invoice_kwargs = {
+                "need_email": True,
+                "send_email_to_provider": True,
+                "provider_data": json.dumps(provider_data),
+            }
+            
             # Создаем инвойс через Telegram
             await callback.bot.send_invoice(
                 chat_id=callback.from_user.id,
                 title=title,
                 description=description,
-                payload=f"subscription_{plan.id}_{user.id}",  # Уникальный payload
-                provider_token=YOOKASSA_TOKEN, 
+                payload=f"subscription_{plan.id}_{user.id}",
+                provider_token=YOOKASSA_TOKEN,
                 currency="RUB",
-                prices=[LabeledPrice(label=f"Подписка {plan.name}", amount=int(final_price * 100))],  # Сумма в копейках
+                prices=[LabeledPrice(label=f"Подписка {plan.name}", amount=amount)],
                 start_parameter=f"subscription_{plan.id}",
                 need_name=False,
                 need_phone_number=False,
-                need_email=False,
                 need_shipping_address=False,
-                send_phone_number_to_provider=False,
-                send_email_to_provider=False,
                 is_flexible=False,
-                disable_notification=False,
-                protect_content=False,
-                reply_to_message_id=None,
-                allow_sending_without_reply=False,
-                reply_markup=None,
-                request_timeout=30
+                **invoice_kwargs
             )
             
             await callback.answer()
