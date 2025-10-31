@@ -1,10 +1,13 @@
 import asyncio
-from sqlalchemy import create_engine, Column, Text, Integer, Boolean, DateTime, Numeric, ForeignKey, CheckConstraint, text, select
+import logging
+from sqlalchemy import create_engine, Column, Text, Integer, BigInteger, Boolean, DateTime, Numeric, ForeignKey, CheckConstraint, UniqueConstraint, Index, text, select
 from sqlalchemy.orm import relationship, declarative_base
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
 from datetime import datetime, timedelta
 from app.config import DATABASE_URL
+
+logger = logging.getLogger(__name__)
 
 Base = declarative_base()
 async_engine = create_async_engine(DATABASE_URL, echo=False)
@@ -134,6 +137,25 @@ class Tracked(Base):
     
     # Relationships
     user = relationship("User", back_populates="trackings")
+    items = relationship("Item", back_populates="tracked", cascade="all, delete-orphan")
+
+
+class Item(Base):
+    """Таблица просмотренных объявлений в разрезе конкретного трекинга"""
+    __tablename__ = 'items'
+
+    id = Column(UUID(as_uuid=True), primary_key=True, server_default=text("uuid_generate_v4()"))
+    ad_id = Column(BigInteger, nullable=False)
+    price = Column(Integer, nullable=False)
+    tracked_id = Column(UUID(as_uuid=True), ForeignKey('tracked.id', ondelete='CASCADE'), nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    tracked = relationship("Tracked", back_populates="items")
+
+    __table_args__ = (
+        UniqueConstraint('ad_id', 'price', 'tracked_id', name='uq_items_ad_price_tracked'),
+        Index('idx_items_tracked_ad_price', 'tracked_id', 'ad_id', 'price'),
+    )
 
 
 

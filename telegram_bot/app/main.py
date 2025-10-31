@@ -5,9 +5,9 @@ from aiogram.enums import ParseMode
 from app.config import BOT_TOKEN
 from app.utils.logging_config import setup_logging
 from app.bot.handlers import base, search, admin, payments, tracking
-from app.bot import scheduler
 from app.db import init_models
 from app.middlewares import SubscriptionCheckMiddleware
+from app.services.tracking_service import init_tracking_service
 from aiogram.client.default import DefaultBotProperties
 
 logger = setup_logging()
@@ -50,19 +50,23 @@ async def main():
     ]
     await bot.set_my_commands(commands)
 
-    # Запуск фоновой задачи проверки цен (каждые 5 минут)
-    async def loop_check():
-        while True:
-            try:
-                await scheduler.check_prices(bot)
-            except Exception as e:
-                logger.error(f"Ошибка в планировщике: {e}")
-            await asyncio.sleep(300)  # 300 секунд = 5 минут
-
-    asyncio.create_task(loop_check())
-
-    logger.info("Bot started")
-    await dp.start_polling(bot)
+    # Инициализируем сервис отслеживания
+    tracking_service = init_tracking_service(bot)
+    
+    # Запускаем сервис отслеживания в фоновой задаче
+    tracking_task = asyncio.create_task(tracking_service.start_tracking())
+    
+    try:
+        logger.info("Bot started")
+        await dp.start_polling(bot)
+    finally:
+        # Останавливаем сервис отслеживания при завершении
+        await tracking_service.stop_tracking()
+        tracking_task.cancel()
+        try:
+            await tracking_task
+        except asyncio.CancelledError:
+            pass
 
 if __name__ == "__main__":
     asyncio.run(main())

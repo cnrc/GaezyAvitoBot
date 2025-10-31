@@ -2,14 +2,17 @@
 Функции для работы с базой данных
 Вся бизнес-логика взаимодействия с БД находится здесь
 """
-from sqlalchemy import select
+import logging
+from sqlalchemy import select, tuple_, exists
 from sqlalchemy.ext.asyncio import AsyncSession
 from datetime import datetime, timedelta
 from typing import Optional
 from .model import (
-    User, SubscriptionPlan, UserSubscription, Payment, 
-    Promocode, PromoUsage, Tracked, AsyncSessionLocal
+    User, SubscriptionPlan, UserSubscription, Payment,
+    Promocode, PromoUsage, Tracked, Item, AsyncSessionLocal
 )
+
+logger = logging.getLogger(__name__)
 
 
 # =================== ПОЛЬЗОВАТЕЛИ ===================
@@ -47,11 +50,18 @@ async def get_or_create_user(telegram_id: str) -> User:
 # =================== ПОДПИСКИ ===================
 
 async def user_has_active_subscription(telegram_id: str) -> bool:
-    """Проверяет, есть ли у пользователя активная подписка (end_date > now)."""
+    """Проверяет, есть ли у пользователя активная подписка (end_date > now) или он админ."""
     print(f"🔍 DB: user_has_active_subscription вызвана для telegram_id: {telegram_id}")
-    
     try:
         async with AsyncSessionLocal() as session:
+            # Сначала проверяем — не является ли пользователь админом
+            user_result = await session.execute(
+                select(User).where(User.telegram_id == telegram_id)
+            )
+            user = user_result.scalar_one_or_none()
+            if user and getattr(user, 'is_admin', False):
+                print(f"🔍 DB: Пользователь {telegram_id} — админ, возвращаем True")
+                return True
             print(f"🔍 DB: Выполняем запрос для проверки подписки {telegram_id}")
             result = await session.execute(
                 select(UserSubscription)
@@ -731,4 +741,149 @@ async def get_notification_stats() -> dict:
         traceback.print_exc()
         return {'total_users': 0, 'with_subscription': 0, 'without_subscription': 0}
 
+
+# =================== ПАРСИНГ И ОТСЛЕЖИВАНИЕ ===================
+
+async def get_active_trackings_for_subscribed_users():
+    """
+    Получает все активные отслеживания пользователей с активной подпиской.
+    Возвращает словарь с группировкой по пользователям.
+    """
+    try:
+        async with AsyncSessionLocal() as session:
+            # Получаем активные отслеживания пользователей с активной подпиской
+            # Используем EXISTS для избежания дубликатов при нескольких подписках
+            result = await session.execute(
+                select(Tracked, User.telegram_id)
+                .join(User, User.id == Tracked.user_id)
+                .where(Tracked.is_active == True)
+                .where(
+                    exists(
+                        select(1)
+                        .where(UserSubscription.user_id == User.id)
+                        .where(UserSubscription.end_date > datetime.utcnow())
+                    )
+                )
+            )
+            
+            trackings_data = result.all()
+            
+            # Группируем по пользователям
+            users_trackings = {}
+            for tracking, telegram_id in trackings_data:
+                if telegram_id not in users_trackings:
+                    users_trackings[telegram_id] = []
+                
+                users_trackings[telegram_id].append({
+                    'id': tracking.id,
+                    'name': tracking.name,
+                    'link': tracking.link,
+                    'min_price': tracking.min_price,
+                    'max_price': tracking.max_price  
+                })
+            
+            logger.info(f"Найдено {len(users_trackings)} пользователей с активными отслеживаниями")
+            return users_trackings
+            
+    except Exception as e:
+        logger.error(f"Ошибка при получении активных отслеживаний: {e}")
+        import traceback
+        traceback.print_exc()
+        return {}
+
+
+async def filter_new_ads_for_tracking(tracked_id: str, ads: list[dict]) -> list[dict]:
+    """Возвращает только новые объявления для конкретного трекинга по (ad_id, price)."""
+    if not ads:
+        return []
+
+    ad_keys = {(int(ad.get('id')), int(ad.get('price'))) for ad in ads if ad.get('id') and ad.get('price')}
+    if not ad_keys:
+        return []
+
+    try:
+        from uuid import UUID
+        tracked_uuid = UUID(tracked_id)
+        
+        async with AsyncSessionLocal() as session:
+            # Загружаем уже сохранённые пары для данного tracked_id
+            result = await session.execute(
+                select(Item.ad_id, Item.price)
+                .where(Item.tracked_id == tracked_uuid)
+                .where(tuple_(Item.ad_id, Item.price).in_(list(ad_keys)))
+            )
+            existing = {(row.ad_id, row.price) for row in result}
+
+            new_ads = [ad for ad in ads if (int(ad.get('id')), int(ad.get('price'))) not in existing]
+            logger.debug(f"Для фильтра {tracked_id}: {len(ads)} всего, {len(existing)} уже были, {len(new_ads)} новых")
+            return new_ads
+    except Exception as e:
+        # При ошибке логируем и возвращаем пустой список, чтобы не отправлять дубликаты
+        logger.error(f"Ошибка при фильтрации новых объявлений для фильтра {tracked_id}: {e}")
+        logger.exception("Детали ошибки:")
+        # Возвращаем пустой список вместо всех объявлений, чтобы избежать повторной отправки
+        return []
+
+
+async def mark_ads_as_seen(tracked_id: str, ads: list[dict]) -> None:
+    """Помечает объявления как просмотренные для конкретного трекинга."""
+    logger.info(f"Вызов mark_ads_as_seen для фильтра {tracked_id} с {len(ads)} объявлениями")
+    
+    if not ads:
+        logger.info("Нет объявлений для сохранения")
+        return
+
+    try:
+        from uuid import UUID
+        tracked_uuid = UUID(tracked_id)
+        logger.debug(f"Converted tracked_id {tracked_id} to UUID: {tracked_uuid}")
+    except Exception as e:
+        logger.error(f"Некорректный UUID для tracked_id: {tracked_id}, ошибка: {e}")
+        return
+
+    rows = []
+    for ad in ads:
+        ad_id = ad.get('id')
+        price = ad.get('price')
+        logger.debug(f"Обрабатываем объявление: id={ad_id}, price={price}")
+        if ad_id is None or price is None:
+            logger.warning(f"Пропускаем объявление с пустыми полями: {ad}")
+            continue
+        try:
+            rows.append({
+                'ad_id': int(ad_id),
+                'price': int(price),
+                'tracked_id': tracked_uuid,
+            })
+        except Exception as e:
+            logger.warning(f"Ошибка при конвертации объявления {ad}: {e}")
+            continue
+
+    if not rows:
+        logger.warning(f"Не удалось подготовить ни одной записи для сохранения (из {len(ads)} объявлений)")
+        return
+    
+    logger.info(f"Подготовлено {len(rows)} записей для сохранения")
+
+    try:
+        async with AsyncSessionLocal() as session:
+            # Вставляем, игнорируя дубликаты по уникальному индексу
+            to_add = [Item(**row) for row in rows]
+            session.add_all(to_add)
+            try:
+                await session.commit()
+                logger.info(f"✅ Сохранено {len(rows)} объявлений для фильтра {tracked_id}")
+            except Exception as e:
+                # На конфликте уникальности просто откатываем без падения
+                await session.rollback()
+                error_msg = str(e)
+                if 'unique constraint' in error_msg.lower() or 'duplicate' in error_msg.lower():
+                    logger.debug(f"Дубликаты при сохранении для фильтра {tracked_id}: {e}")
+                else:
+                    logger.error(f"Критическая ошибка при сохранении для фильтра {tracked_id}: {e}")
+                    raise  # Перебрасываем если это не дубликат
+    except Exception as e:
+        logger.error(f"❌ Ошибка при сохранении просмотренных объявлений для фильтра {tracked_id}: {e}")
+        logger.exception("Детали ошибки:")
+        raise  # Пробрасываем дальше, чтобы видеть в логах
 

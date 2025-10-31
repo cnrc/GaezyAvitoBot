@@ -1,0 +1,31 @@
+services:
+  parser_avito:
+    build:
+      context: ./parser_avito
+      dockerfile: Dockerfile
+    network_mode: host
+    restart: unless-stopped
+    env_file:
+      - parser_avito/.env
+
+  telegram_bot:
+    build:
+      context: ./telegram_bot
+      dockerfile: Dockerfile
+    network_mode: host
+    restart: unless-stopped
+    env_file:
+      - telegram_bot/.env
+    depends_on: []
+
+
+
+
+
+
+
+
+
+
+
+

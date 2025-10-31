@@ -11,6 +11,7 @@ from .model import (
     PromoUsage,
     UserActivePromocode,
     Tracked,
+    Item,
     AsyncSessionLocal,
     init_models
 )
@@ -64,6 +65,7 @@ __all__ = [
     'PromoUsage',
     'UserActivePromocode',
     'Tracked',
+    'Item',
     'AsyncSessionLocal',
     'init_models',
     
